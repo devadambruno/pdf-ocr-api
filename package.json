@@ -1,0 +1,18 @@
+{
+  "name": "pdf-ocr-api",
+  "version": "1.0.0",
+  "description": "API OCR PDF usando Adobe PDF Services",
+  "author": "ArgoloConstrutora",
+  "license": "MIT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.cjs"
+  },
+  "dependencies": {
+    "@adobe/pdfservices-node-sdk": "4.1.0",
+    "adm-zip": "^0.5.16",
+    "dotenv": "^17.2.3",
+    "express": "^4.19.2",
+    "unzipper": "^0.10.14"
+  }
+}
