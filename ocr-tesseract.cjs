@@ -7,7 +7,7 @@ async function ocrWithTesseract(pdfPath) {
   const imagesDir = path.join(__dirname, "images");
   fs.mkdirSync(imagesDir, { recursive: true });
 
-  // PDF → PNG
+  // PDF → PNG (300 DPI = melhor custo/benefício)
   await new Promise((resolve, reject) => {
     exec(
       `pdftoppm -r 300 "${pdfPath}" "${imagesDir}/page" -png`,
@@ -20,34 +20,32 @@ async function ocrWithTesseract(pdfPath) {
     .filter(f => f.endsWith(".png"))
     .sort();
 
-  let fullText = "";
-
-for (const file of files) {
-  const { data } = await Tesseract.recognize(
-    path.join(imagesDir, file),
-    "por",
-    {
-      tessedit_pageseg_mode: 1,
-      tessedit_char_whitelist:
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:/()-ºªÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç "
-    }
+  // 🔥 OCR EM PARALELO (ganho grande de performance)
+  const ocrPromises = files.map(file =>
+    Tesseract.recognize(
+      path.join(imagesDir, file),
+      "por",
+      {
+        // PSM correto para texto jurídico
+        tessedit_pageseg_mode: 3,
+        preserve_interword_spaces: 1,
+        // whitelist mais enxuta (opcional)
+        tessedit_char_whitelist:
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:/()-ºªÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç "
+      }
+    ).then(({ data }) => data.text)
   );
 
-  fullText += data.text + "\n";
-}
+  let fullText = (await Promise.all(ocrPromises)).join("\n");
 
-// 🔥 LIMPEZA PÓS-OCR (AQUI 👇)
-fullText = fullText
-  // remove lixo tipo eee aaa ccc
-  .replace(/\b[eac]{3,}\b/gi, "")
-  // remove espaços duplicados
-  .replace(/\s{2,}/g, " ")
-  // remove quebras excessivas
-  .replace(/(\n\s*){2,}/g, "\n")
-  // corrige espaçamento antes de pontuação
-  .replace(/\s+([.,;:])/g, "$1");
+  // 🧹 LIMPEZA PÓS-OCR
+  fullText = fullText
+    .replace(/\b[eac]{3,}\b/gi, "")     // remove eee aaa ccc
+    .replace(/\s{2,}/g, " ")            // espaços duplicados
+    .replace(/(\n\s*){2,}/g, "\n")      // quebras excessivas
+    .replace(/\s+([.,;:])/g, "$1");     // espaço antes de pontuação
 
-return fullText;
+  return fullText;
 }
 
 module.exports = { ocrWithTesseract };
