@@ -5,8 +5,13 @@ const fs = require("fs");
 const path = require("path");
 const AdmZip = require("adm-zip");
 
-// 👇 IMPORTA O OCR BINÁRIO (CLI)
 const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
+const {
+  createJob,
+  setJobResult,
+  setJobError,
+  getJob
+} = require("./jobs");
 
 const {
   ServicePrincipalCredentials,
@@ -18,43 +23,39 @@ const {
   ExtractPDFResult
 } = require("@adobe/pdfservices-node-sdk");
 
-
 const app = express();
 app.use(express.json());
 
+// 🔐 API KEY
 app.use((req, res, next) => {
   if (req.path === "/health") return next();
-
-  const apiKey = req.headers["x-api-key"];
-  if (!apiKey || apiKey !== process.env.API_KEY) {
-    return res.status(401).json({ success: false, error: "Unauthorized" });
+  if (req.headers["x-api-key"] !== process.env.API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
   next();
 });
 
+app.get("/health", (_, res) => res.json({ status: "ok" }));
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
-});
-
+// ======================================================
+// POST /ocr  → tenta Adobe, senão cria job assíncrono
+// ======================================================
 app.post("/ocr", async (req, res) => {
-  let readStream;
+  const { pdf_url } = req.body;
+  if (!pdf_url) {
+    return res.status(400).json({ error: "pdf_url é obrigatório" });
+  }
 
   try {
-    const { pdf_url } = req.body;
-    if (!pdf_url) {
-      return res.status(400).json({ error: "pdf_url é obrigatório" });
-    }
+    console.log("🔵 Tentando Adobe OCR");
 
-    console.log("📥 Baixando PDF...");
-    const response = await fetch(pdf_url);
-    if (!response.ok) throw new Error("Erro ao baixar PDF");
+    const pdfBuffer = Buffer.from(
+      await (await fetch(pdf_url)).arrayBuffer()
+    );
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const inputPath = path.join(__dirname, "input.pdf");
-    fs.writeFileSync(inputPath, buffer);
+    const inputPath = path.join(__dirname, "input-sync.pdf");
+    fs.writeFileSync(inputPath, pdfBuffer);
 
-    // Credenciais
     const credentials = new ServicePrincipalCredentials({
       clientId: process.env.PDF_SERVICES_CLIENT_ID,
       clientSecret: process.env.PDF_SERVICES_CLIENT_SECRET
@@ -62,91 +63,95 @@ app.post("/ocr", async (req, res) => {
 
     const pdfServices = new PDFServices({ credentials });
 
-    // Upload
-    readStream = fs.createReadStream(inputPath);
     const inputAsset = await pdfServices.upload({
-      readStream,
+      readStream: fs.createReadStream(inputPath),
       mimeType: MimeType.PDF
     });
 
-    // 🔥 Extract com OCR automático
-    const params = new ExtractPDFParams({
-      elementsToExtract: [ExtractElementType.TEXT]
+    const job = new ExtractPDFJob({
+      inputAsset,
+      params: new ExtractPDFParams({
+        elementsToExtract: [ExtractElementType.TEXT]
+      })
     });
 
-    const job = new ExtractPDFJob({ inputAsset, params });
-
     const pollingURL = await pdfServices.submit({ job });
+
     const result = await pdfServices.getJobResult({
       pollingURL,
       resultType: ExtractPDFResult
     });
 
-    const resultAsset = result.result.resource;
-    const streamAsset = await pdfServices.getContent({ asset: resultAsset });
+    const content = await pdfServices.getContent({
+      asset: result.result.resource
+    });
 
-    // Salvar ZIP
     const zipPath = path.join(__dirname, "result.zip");
-    const writeStream = fs.createWriteStream(zipPath);
-    await new Promise(resolve =>
-      streamAsset.readStream.pipe(writeStream).on("finish", resolve)
+    await new Promise(r =>
+      content.readStream
+        .pipe(fs.createWriteStream(zipPath))
+        .on("finish", r)
     );
 
-    // Extrair TEXTO
     const zip = new AdmZip(zipPath);
-    const jsondata = zip.readAsText("structuredData.json");
-    const data = JSON.parse(jsondata);
+    const data = JSON.parse(zip.readAsText("structuredData.json"));
 
     const text = data.elements
       .filter(e => e.Text)
       .map(e => e.Text)
       .join("\n");
 
-    res.json({
-    success: true,
-    provider: "adobe",
-    pages: data.pages?.length || null,
-    text
-  });
-
+    return res.json({
+      success: true,
+      provider: "adobe",
+      text
+    });
 
   } catch (err) {
-     console.error("Erro Adobe:", err);
+    console.warn("🟠 Adobe falhou → async");
 
-  // 🔥 QUOTA ESTOURADA → FALLBACK
-  if (err?._statusCode === 429 || err?._errorCode === "QUOTA_EXCEEDED") {
-    console.log("🔁 Adobe sem quota, usando OCR gratuito");
+    const jobId = createJob();
 
-    try {
-      const text = await ocrWithTesseract(
-        path.join(__dirname, "input.pdf")
-      );
+    (async () => {
+      try {
+        const buffer = Buffer.from(
+          await (await fetch(pdf_url)).arrayBuffer()
+        );
 
-      return res.json({
-        success: true,
-        provider: "tesseract",
-        text
-      });
+        const inputPath = path.join(__dirname, `input-${jobId}.pdf`);
+        fs.writeFileSync(inputPath, buffer);
 
-    } catch (ocrErr) {
-      console.error("Erro OCR gratuito:", ocrErr);
-      return res.status(500).json({
-        success: false,
-        error: "Falha no OCR gratuito",
-        detail: ocrErr.message
-      });
-    }
-  }
+        const text = await ocrWithTesseract(inputPath);
+        setJobResult(jobId, text);
+        fs.unlinkSync(inputPath);
 
-  res.status(500).json({
-    success: false,
-    error: err.message
-  });
-  } finally {
-    readStream?.destroy();
+      } catch (e) {
+        setJobError(jobId, e.message);
+      }
+    })();
+
+    return res.json({
+      success: false,
+      provider: "async",
+      status: "processing",
+      job_id: jobId
+    });
   }
 });
 
-app.listen(3000, () => {
-  console.log("✅ Adobe Extract + OCR API rodando na porta 3000");
+// =================================
+// GET /ocr/status/:job_id
+// =================================
+app.get("/ocr/status/:job_id", (req, res) => {
+  const job = getJob(req.params.job_id);
+
+  if (!job) {
+    return res.status(404).json({ error: "Job não encontrado" });
+  }
+
+  return res.json(job);
 });
+
+app.listen(3000, () =>
+  console.log("✅ OCR API (Adobe + Async) rodando na porta 3000")
+);
