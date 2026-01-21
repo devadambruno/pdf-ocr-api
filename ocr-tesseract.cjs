@@ -14,29 +14,34 @@ async function ocrWithTesseract(pdfPath) {
       err => (err ? reject(err) : resolve())
     );
   });
+  
 
-  const files = fs
-    .readdirSync(imagesDir)
-    .filter(f => f.endsWith(".png"))
-    .sort();
+const results = [];
+const CONCURRENCY = 2; // 👈 limite seguro para Railway
 
-  // 🔥 OCR EM PARALELO (ganho grande de performance)
-  const ocrPromises = files.map(file =>
-    Tesseract.recognize(
-      path.join(imagesDir, file),
-      "por",
-      {
-        // PSM correto para texto jurídico
-        tessedit_pageseg_mode: 3,
-        preserve_interword_spaces: 1,
-        // whitelist mais enxuta (opcional)
-        tessedit_char_whitelist:
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:/()-ºªÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç "
-      }
-    ).then(({ data }) => data.text)
+for (let i = 0; i < files.length; i += CONCURRENCY) {
+  const batch = files.slice(i, i + CONCURRENCY);
+
+  const texts = await Promise.all(
+    batch.map(file =>
+      Tesseract.recognize(
+        path.join(imagesDir, file),
+        "por",
+        {
+          tessedit_pageseg_mode: 3,
+          preserve_interword_spaces: 1,
+          tessedit_char_whitelist:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:/()-ºªÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç "
+        }
+      ).then(({ data }) => data.text)
+    )
   );
 
-  let fullText = (await Promise.all(ocrPromises)).join("\n");
+  results.push(...texts);
+}
+
+let fullText = results.join("\n");
+
 
   // 🧹 LIMPEZA PÓS-OCR
   fullText = fullText
