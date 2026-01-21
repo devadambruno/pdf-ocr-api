@@ -7,48 +7,57 @@ async function ocrWithTesseract(pdfPath) {
   const imagesDir = path.join(__dirname, "images");
   fs.mkdirSync(imagesDir, { recursive: true });
 
-  // PDF → PNG (300 DPI = melhor custo/benefício)
+  // PDF → PNG
   await new Promise((resolve, reject) => {
     exec(
       `pdftoppm -r 300 "${pdfPath}" "${imagesDir}/page" -png`,
       err => (err ? reject(err) : resolve())
     );
   });
-  
 
-const results = [];
-const CONCURRENCY = 2; // 👈 limite seguro para Railway
+  // 👇 DECLARADO UMA ÚNICA VEZ (escopo correto)
+  const files = fs
+    .readdirSync(imagesDir)
+    .filter(f => f.endsWith(".png"))
+    .sort();
 
-for (let i = 0; i < files.length; i += CONCURRENCY) {
-  const batch = files.slice(i, i + CONCURRENCY);
+  const results = [];
+  const CONCURRENCY = 2;
 
-  const texts = await Promise.all(
-    batch.map(file =>
-      Tesseract.recognize(
-        path.join(imagesDir, file),
-        "por",
-        {
-          tessedit_pageseg_mode: 3,
-          preserve_interword_spaces: 1,
-          tessedit_char_whitelist:
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:/()-ºªÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç "
-        }
-      ).then(({ data }) => data.text)
-    )
-  );
+  for (let i = 0; i < files.length; i += CONCURRENCY) {
+    const batch = files.slice(i, i + CONCURRENCY);
 
-  results.push(...texts);
-}
+    const texts = await Promise.all(
+      batch.map(file =>
+        Tesseract.recognize(
+          path.join(imagesDir, file),
+          "por",
+          {
+            tessedit_pageseg_mode: 3,
+            preserve_interword_spaces: 1,
+            tessedit_char_whitelist:
+              "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:/()-ºªÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç "
+          }
+        ).then(({ data }) => data.text)
+      )
+    );
 
-let fullText = results.join("\n");
+    results.push(...texts);
+  }
 
+  let fullText = results.join("\n");
 
   // 🧹 LIMPEZA PÓS-OCR
   fullText = fullText
-    .replace(/\b[eac]{3,}\b/gi, "")     // remove eee aaa ccc
-    .replace(/\s{2,}/g, " ")            // espaços duplicados
-    .replace(/(\n\s*){2,}/g, "\n")      // quebras excessivas
-    .replace(/\s+([.,;:])/g, "$1");     // espaço antes de pontuação
+    .replace(/\b[eac]{3,}\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/(\n\s*){2,}/g, "\n")
+    .replace(/\s+([.,;:])/g, "$1");
+
+  // 🧼 LIMPEZA DE ARQUIVOS (AGORA FUNCIONA)
+  for (const file of files) {
+    fs.unlinkSync(path.join(imagesDir, file));
+  }
 
   return fullText;
 }
