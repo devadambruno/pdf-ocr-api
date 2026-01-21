@@ -22,15 +22,32 @@ async function ocrWithTesseract(pdfPath) {
 
   let fullText = "";
 
-  for (const file of files) {
-    const { data } = await Tesseract.recognize(
-      path.join(imagesDir, file),
-      "por"
-    );
-    fullText += data.text + "\n";
-  }
+for (const file of files) {
+  const { data } = await Tesseract.recognize(
+    path.join(imagesDir, file),
+    "por",
+    {
+      tessedit_pageseg_mode: 1,
+      tessedit_char_whitelist:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,:/()-ºªÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç "
+    }
+  );
 
-  return fullText;
+  fullText += data.text + "\n";
+}
+
+// 🔥 LIMPEZA PÓS-OCR (AQUI 👇)
+fullText = fullText
+  // remove lixo tipo eee aaa ccc
+  .replace(/\b[eac]{3,}\b/gi, "")
+  // remove espaços duplicados
+  .replace(/\s{2,}/g, " ")
+  // remove quebras excessivas
+  .replace(/(\n\s*){2,}/g, "\n")
+  // corrige espaçamento antes de pontuação
+  .replace(/\s+([.,;:])/g, "$1");
+
+return fullText;
 }
 
 module.exports = { ocrWithTesseract };
