@@ -4,6 +4,8 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const AdmZip = require("adm-zip");
+const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
+
 
 const {
   ServicePrincipalCredentials,
@@ -105,11 +107,37 @@ app.post("/ocr", async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
+     console.error("Erro Adobe:", err);
+
+  // 🔥 QUOTA ESTOURADA → FALLBACK
+  if (err?._statusCode === 429 || err?._errorCode === "QUOTA_EXCEEDED") {
+    console.log("🔁 Adobe sem quota, usando OCR gratuito");
+
+    try {
+      const text = await ocrWithTesseract(
+        path.join(__dirname, "input.pdf")
+      );
+
+      return res.json({
+        success: true,
+        provider: "tesseract",
+        text
+      });
+
+    } catch (ocrErr) {
+      console.error("Erro OCR gratuito:", ocrErr);
+      return res.status(500).json({
+        success: false,
+        error: "Falha no OCR gratuito",
+        detail: ocrErr.message
+      });
+    }
+  }
+
+  res.status(500).json({
+    success: false,
+    error: err.message
+  });
   } finally {
     readStream?.destroy();
   }
