@@ -4,8 +4,9 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const AdmZip = require("adm-zip");
-const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
 
+// 👇 IMPORTA O OCR BINÁRIO (CLI)
+const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
 
 const {
   ServicePrincipalCredentials,
@@ -16,6 +17,7 @@ const {
   ExtractPDFJob,
   ExtractPDFResult
 } = require("@adobe/pdfservices-node-sdk");
+
 
 const app = express();
 app.use(express.json());
@@ -101,10 +103,12 @@ app.post("/ocr", async (req, res) => {
       .join("\n");
 
     res.json({
-      success: true,
-      pages: data.pages?.length || null,
-      text
-    });
+    success: true,
+    provider: "adobe",
+    pages: data.pages?.length || null,
+    text
+  });
+
 
   } catch (err) {
      console.error("Erro Adobe:", err);
