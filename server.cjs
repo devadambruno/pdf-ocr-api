@@ -16,13 +16,8 @@ const {
   ExtractPDFResult
 } = require("@adobe/pdfservices-node-sdk");
 
-const { ocrWithTesseract } = require("./ocr-tesseract");
-const {
-  createJob,
-  setJobResult,
-  setJobError,
-  getJob
-} = require("./jobs");
+const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
+const { createJob, setJobResult, setJobError, getJob } = require("./jobs");
 
 const app = express();
 app.use(express.json());
@@ -30,13 +25,12 @@ app.use(express.json());
 /* ================= CONFIG ================= */
 
 const MAX_ASYNC_PAGES = 20;
-const JOB_TIMEOUT = 3 * 60 * 1000; // 3 min
+const JOB_TIMEOUT = 3 * 60 * 1000;
 
 /* ================= MIDDLEWARE ================= */
 
 app.use((req, res, next) => {
   if (req.path === "/health") return next();
-
   if (req.headers["x-api-key"] !== process.env.API_KEY) {
     return res.status(401).json({ success: false, error: "Unauthorized" });
   }
@@ -61,9 +55,7 @@ async function getPdfPageCount(pdfPath) {
 }
 
 async function hasDigitalText(pdfPath) {
-  const text = await execAsync(
-    `pdftotext "${pdfPath}" - -f 1 -l 1`
-  );
+  const text = await execAsync(`pdftotext "${pdfPath}" - -f 1 -l 1`);
   return text.trim().length > 50;
 }
 
@@ -74,8 +66,6 @@ async function extractTextDirect(pdfPath) {
 /* ================= ROUTES ================= */
 
 app.get("/health", (_, res) => res.json({ status: "ok" }));
-
-/* ================= OCR ================= */
 
 app.post("/ocr", async (req, res) => {
   let readStream;
@@ -94,43 +84,22 @@ app.post("/ocr", async (req, res) => {
     );
     fs.writeFileSync(inputPath, buffer);
 
-    /* -------- DIGITAL PDF (SEM OCR) -------- */
-
     const pages = await getPdfPageCount(inputPath);
 
-if (await hasDigitalText(inputPath)) {
-  // PDF digital grande → async
-  if (pages > 10) {
-    const jobId = createJob();
+    /* -------- PDF DIGITAL (FORÇADO SÍNCRONO PARA TESTE) -------- */
 
-    res.json({
-      success: false,
-      provider: "direct",
-      status: "processing",
-      job_id: jobId
-    });
+    if (await hasDigitalText(inputPath)) {
+      console.log(`📄 PDF digital detectado (${pages} páginas)`);
 
-    (async () => {
-      try {
-        const text = await extractTextDirect(inputPath);
-        setJobResult(jobId, text);
-      } catch (e) {
-        setJobError(jobId, e.message);
-      }
-    })();
+      const text = await extractTextDirect(inputPath);
 
-    return;
-  }
-
-  // PDF digital pequeno → síncrono
-  const text = await extractTextDirect(inputPath);
-  return res.json({
-    success: true,
-    provider: "direct",
-    text
-  });
-}
-
+      return res.json({
+        success: true,
+        provider: "direct",
+        pages,
+        text
+      });
+    }
 
     /* -------- ADOBE OCR -------- */
 
@@ -195,9 +164,7 @@ if (await hasDigitalText(inputPath)) {
       }
     }
 
-    /* -------- FALLBACK DECISION -------- */
-
-    const pages = await getPdfPageCount(inputPath);
+    /* -------- OCR GRATUITO (ASYNC) -------- */
 
     if (pages > MAX_ASYNC_PAGES) {
       return res.json({
@@ -205,13 +172,9 @@ if (await hasDigitalText(inputPath)) {
         provider: "async",
         reason: "PAGE_LIMIT_EXCEEDED",
         pages,
-        max_allowed: MAX_ASYNC_PAGES,
-        message:
-          "Documento grande demais para OCR gratuito. Aguarde renovação da cota Adobe."
+        max_allowed: MAX_ASYNC_PAGES
       });
     }
-
-    /* -------- ASYNC OCR -------- */
 
     const jobId = createJob();
 
@@ -248,7 +211,7 @@ if (await hasDigitalText(inputPath)) {
     res.status(500).json({ success: false, error: err.message });
   } finally {
     readStream?.destroy();
-    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    // ⚠️ NÃO apagar input.pdf aqui enquanto estiver testando síncrono
   }
 });
 
@@ -260,8 +223,6 @@ app.get("/ocr/status/:id", (req, res) => {
   res.json(job);
 });
 
-/* ================= START ================= */
-
 app.listen(3000, () => {
-  console.log("✅ OCR API inteligente rodando (direct + Adobe + async)");
+  console.log("✅ OCR API rodando (modo teste síncrono para PDF digital)");
 });
