@@ -96,15 +96,41 @@ app.post("/ocr", async (req, res) => {
 
     /* -------- DIGITAL PDF (SEM OCR) -------- */
 
-    if (await hasDigitalText(inputPath)) {
-      const text = await extractTextDirect(inputPath);
+    const pages = await getPdfPageCount(inputPath);
 
-      return res.json({
-        success: true,
-        provider: "direct",
-        text
-      });
-    }
+if (await hasDigitalText(inputPath)) {
+  // PDF digital grande → async
+  if (pages > 10) {
+    const jobId = createJob();
+
+    res.json({
+      success: false,
+      provider: "direct",
+      status: "processing",
+      job_id: jobId
+    });
+
+    (async () => {
+      try {
+        const text = await extractTextDirect(inputPath);
+        setJobResult(jobId, text);
+      } catch (e) {
+        setJobError(jobId, e.message);
+      }
+    })();
+
+    return;
+  }
+
+  // PDF digital pequeno → síncrono
+  const text = await extractTextDirect(inputPath);
+  return res.json({
+    success: true,
+    provider: "direct",
+    text
+  });
+}
+
 
     /* -------- ADOBE OCR -------- */
 
