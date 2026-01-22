@@ -6,8 +6,8 @@ async function ocrWithTesseract(pdfPath) {
   const workDir = path.join(__dirname, "ocr-work");
   fs.mkdirSync(workDir, { recursive: true });
 
-  // PDF → PNG
-  await execAsync(`pdftoppm -r 150 "${pdfPath}" "${workDir}/page" -png`);
+  // PDF → PNG (equilíbrio qualidade x tempo)
+  await execAsync(`pdftoppm -r 200 "${pdfPath}" "${workDir}/page" -png`);
 
   const images = fs
     .readdirSync(workDir)
@@ -21,7 +21,7 @@ async function ocrWithTesseract(pdfPath) {
     const outBase = imgPath.replace(".png", "");
 
     await execAsync(
-      `tesseract "${imgPath}" "${outBase}" -l por --psm 7`
+      `tesseract "${imgPath}" "${outBase}" -l por --psm 6`
     );
 
     fullText += fs.readFileSync(`${outBase}.txt`, "utf8") + "\n";
