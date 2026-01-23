@@ -86,20 +86,7 @@ app.post("/ocr", async (req, res) => {
 
     const pages = await getPdfPageCount(inputPath);
 
-    /* -------- PDF DIGITAL (FORÇADO SÍNCRONO PARA TESTE) -------- */
 
-    if (await hasDigitalText(inputPath)) {
-      console.log(`📄 PDF digital detectado (${pages} páginas)`);
-
-      const text = await extractTextDirect(inputPath);
-
-      return res.json({
-        success: true,
-        provider: "direct",
-        pages,
-        text
-      });
-    }
 
     /* -------- ADOBE OCR -------- */
 
@@ -187,6 +174,23 @@ app.post("/ocr", async (req, res) => {
         throw adobeErr;
       }
     }
+
+
+   /* -------- FALLBACK PDF DIGITAL -------- */
+
+if (await hasDigitalText(inputPath)) {
+  console.log("🔁 Adobe indisponível, usando extração direta");
+
+  const text = await extractTextDirect(inputPath);
+
+  return res.json({
+    success: true,
+    provider: "direct",
+    pages,
+    text
+  });
+}
+
 
     /* -------- OCR GRATUITO (ASYNC) -------- */
 
