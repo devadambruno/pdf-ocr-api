@@ -119,8 +119,11 @@ app.post("/ocr", async (req, res) => {
       });
 
       const params = new ExtractPDFParams({
-        elementsToExtract: [ExtractElementType.TEXT]
-      });
+        elementsToExtract: [
+          ExtractElementType.TEXT,
+          ExtractElementType.TABLES
+        ]
+            });
 
       const job = new ExtractPDFJob({ inputAsset, params });
 
@@ -143,17 +146,38 @@ app.post("/ocr", async (req, res) => {
       const zip = new AdmZip(zipPath);
       const json = JSON.parse(zip.readAsText("structuredData.json"));
 
-      const text = json.elements
-        .filter(e => e.Text)
-        .map(e => e.Text)
-        .join("\n");
+      let output = "";
+
+        for (const el of json.elements) {
+          // TEXTO NORMAL
+          if (el.Text) {
+            output += el.Text + "\n";
+          }
+
+          // TABELAS
+          if (el.Type === "Table" && el.Rows) {
+            output += "\n[TABELA]\n";
+
+            for (const row of el.Rows) {
+              const line = row.Cells
+                .map(c => (c.Text || "").replace(/\n/g, " ").trim())
+                .join(" | ");
+
+              output += line + "\n";
+            }
+
+            output += "[/TABELA]\n\n";
+          }
+        }
+
 
       return res.json({
-        success: true,
-        provider: "adobe",
-        pages: json.pages?.length || null,
-        text
-      });
+      success: true,
+      provider: "adobe",
+      pages: json.pages?.length || null,
+      text: output
+    });
+
 
     } catch (adobeErr) {
       if (
