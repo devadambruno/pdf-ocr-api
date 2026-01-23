@@ -86,6 +86,31 @@ app.post("/ocr", async (req, res) => {
 
     const pages = await getPdfPageCount(inputPath);
 
+    // 🚨 DECISÃO ANTES DE QUALQUER OCR PESADO
+    if (pages > 10) {
+      const jobId = createJob();
+
+      res.json({
+        success: false,
+        provider: "adobe",
+        status: "processing",
+        job_id: jobId,
+        pages
+      });
+
+      // 👇 PROCESSA EM BACKGROUND (FORA DO HTTP)
+      (async () => {
+        try {
+          await processAdobeAsync(jobId, inputPath);
+        } catch (e) {
+          setJobError(jobId, e.message);
+        }
+      })();
+
+      return; // 🔴 ISSO É CRÍTICO
+    }
+
+
 
 
     /* -------- ADOBE OCR -------- */
@@ -175,6 +200,8 @@ app.post("/ocr", async (req, res) => {
     }
 
 
+
+
    /* -------- FALLBACK PDF DIGITAL -------- */
 
 if (await hasDigitalText(inputPath)) {
@@ -241,6 +268,70 @@ if (await hasDigitalText(inputPath)) {
     // ⚠️ NÃO apagar input.pdf aqui enquanto estiver testando síncrono
   }
 });
+
+
+
+  async function processAdobeAsync(jobId, inputPath) {
+  const credentials = new ServicePrincipalCredentials({
+    clientId: process.env.PDF_SERVICES_CLIENT_ID,
+    clientSecret: process.env.PDF_SERVICES_CLIENT_SECRET
+  });
+
+  const pdfServices = new PDFServices({ credentials });
+
+  const readStream = fs.createReadStream(inputPath);
+
+  const inputAsset = await pdfServices.upload({
+    readStream,
+    mimeType: MimeType.PDF
+  });
+
+  const params = new ExtractPDFParams({
+    elementsToExtract: [
+      ExtractElementType.TEXT
+    ]
+  });
+
+  const job = new ExtractPDFJob({ inputAsset, params });
+  const pollingURL = await pdfServices.submit({ job });
+
+  const result = await pdfServices.getJobResult({
+    pollingURL,
+    resultType: ExtractPDFResult
+  });
+
+  const asset = result.result.resource;
+  const streamAsset = await pdfServices.getContent({ asset });
+
+  const zipPath = path.join(__dirname, `${jobId}.zip`);
+  await new Promise(resolve =>
+    streamAsset.readStream
+      .pipe(fs.createWriteStream(zipPath))
+      .on("finish", resolve)
+  );
+
+  const zip = new AdmZip(zipPath);
+  const json = JSON.parse(zip.readAsText("structuredData.json"));
+
+  let output = "";
+
+  for (const el of json.elements) {
+    if (el.Text) output += el.Text + "\n";
+
+    if (el.Type === "Table" && el.Rows) {
+      output += "\n[TABELA]\n";
+      for (const row of el.Rows) {
+        output += row.Cells
+          .map(c => (c.Text || "").replace(/\n/g, " ").trim())
+          .join(" | ") + "\n";
+      }
+      output += "[/TABELA]\n";
+    }
+  }
+
+  setJobResult(jobId, output);
+}
+
 
 /* ================= STATUS ================= */
 
