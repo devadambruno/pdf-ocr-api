@@ -107,8 +107,7 @@ app.post("/ocr", async (req, res) => {
 
       const params = new ExtractPDFParams({
         elementsToExtract: [
-          ExtractElementType.TEXT,
-          ExtractElementType.TABLES
+          ExtractElementType.TEXT
         ]
             });
 
