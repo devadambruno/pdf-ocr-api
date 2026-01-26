@@ -159,11 +159,41 @@ app.post("/ocr", async (req, res) => {
 
       let output = "";
 
-        for (const el of json.elements) {
-          // TEXTO NORMAL
-          if (el.Text) {
-            output += el.Text + "\n";
+        const pagesMap = {};
+
+      for (const el of json.elements) {
+        const page = el.Page || el.PageNumber || 1;
+
+        if (!pagesMap[page]) {
+          pagesMap[page] = [];
+        }
+
+        // TEXTO NORMAL
+        if (el.Text) {
+          pagesMap[page].push(el.Text);
+        }
+
+        // TABELAS (se existirem)
+        if (el.Type === "Table" && el.Rows) {
+          pagesMap[page].push("[TABELA]");
+          for (const row of el.Rows) {
+            const line = row.Cells
+              .map(c => (c.Text || "").replace(/\n/g, " ").trim())
+              .join(" | ");
+            pagesMap[page].push(line);
           }
+          pagesMap[page].push("[/TABELA]");
+        }
+      }
+
+
+      const pages = Object.keys(pagesMap)
+      .sort((a, b) => Number(a) - Number(b))
+      .map(page => ({
+        page: Number(page),
+        text: pagesMap[page].join("\n")
+      }));
+
 
           // TABELAS
           if (el.Type === "Table" && el.Rows) {
@@ -179,15 +209,16 @@ app.post("/ocr", async (req, res) => {
 
             output += "[/TABELA]\n\n";
           }
-        }
+        
 
 
       return res.json({
       success: true,
       provider: "adobe",
-      pages: json.pages?.length || null,
-      text: output
+      total_pages: pages.length,
+      pages
     });
+
 
 
     } catch (adobeErr) {
@@ -329,7 +360,11 @@ if (await hasDigitalText(inputPath)) {
     }
   }
 
-  setJobResult(jobId, output);
+  setJobResult(jobId, {
+  total_pages: pages.length,
+  pages
+  });
+
 }
 
 
