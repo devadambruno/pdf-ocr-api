@@ -204,7 +204,7 @@ app.post("/ocr/parse", async (req, res) => {
 
   if (!pdf_url || !prompt_base) {
     return res.status(400).json({
-      error: "pdf_url e prompt_base são obrigatórios"
+      error: "pdf_url e prompt_base obrigatórios"
     });
   }
 
@@ -218,20 +218,24 @@ app.post("/ocr/parse", async (req, res) => {
     updated_at: new Date()
   });
 
-  processJob(job_id, pdf_url, prompt_base).catch(async e => {
-    await xanoUpdateJob(job_id, {
-      status: "error",
-      error: e.message,
-      updated_at: new Date()
+  // 🔥 NÃO aguarda
+  processJob(job_id, pdf_url, prompt_base)
+    .catch(async e => {
+      await xanoUpdateJob(job_id, {
+        status: "error",
+        error: e.message,
+        updated_at: new Date()
+      });
     });
-  });
 
+  // ⚡ resposta imediata
   res.json({
     success: true,
     job_id,
     status: "processing"
   });
 });
+
 
 app.get("/ocr/status/:job_id", async (req, res) => {
   const job = await xanoGetJob(req.params.job_id);
