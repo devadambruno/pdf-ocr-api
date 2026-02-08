@@ -72,7 +72,7 @@ async function xanoCreateJob(data) {
 }
 
 async function xanoUpdateJob(job_id, data) {
-  await fetch(`${process.env.XANO_BASE_URL}/ocr_jobs/${job_id}`, {
+  await fetch(`${process.env.XANO_BASE_URL}/ocr_jobs/by_job_id/${job_id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data)
@@ -80,7 +80,7 @@ async function xanoUpdateJob(job_id, data) {
 }
 
 async function xanoGetJob(job_id) {
-  return fetch(`${process.env.XANO_BASE_URL}/ocr_jobs/${job_id}`)
+  return fetch(`${process.env.XANO_BASE_URL}/ocr_jobs/by_job_id/${job_id}`)
     .then(r => r.json());
 }
 
