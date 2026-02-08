@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
 const AdmZip = require("adm-zip");
+const crypto = require("crypto");
 
 const {
   ServicePrincipalCredentials,
@@ -26,6 +27,9 @@ app.use(express.json());
 
 const MAX_ASYNC_PAGES = 20;
 const JOB_TIMEOUT = 3 * 60 * 1000;
+const TMP_DIR = path.join(__dirname, "tmp");
+
+if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
 /* ================= MIDDLEWARE ================= */
 
@@ -63,13 +67,54 @@ async function extractTextDirect(pdfPath) {
   return await execAsync(`pdftotext "${pdfPath}" -`);
 }
 
+function buildPagesFromAdobe(json) {
+  const pagesMap = {};
+
+  for (const el of json.elements) {
+    const page = el.Page || el.PageNumber || 1;
+    if (!pagesMap[page]) pagesMap[page] = [];
+
+    if (el.Text) pagesMap[page].push(el.Text);
+
+    if (el.Type === "Table" && el.Rows) {
+      pagesMap[page].push("[TABELA]");
+      for (const row of el.Rows) {
+        pagesMap[page].push(
+          row.Cells
+            .map(c => (c.Text || "").replace(/\n/g, " ").trim())
+            .join(" | ")
+        );
+      }
+      pagesMap[page].push("[/TABELA]");
+    }
+  }
+
+  return Object.keys(pagesMap)
+    .sort((a, b) => Number(a) - Number(b))
+    .map(page => ({
+      page: Number(page),
+      text: pagesMap[page].join("\n")
+    }));
+}
+
+function splitTextIntoPages(text) {
+  return text
+    .split("\f")
+    .map((t, i) => ({
+      page: i + 1,
+      text: t.trim()
+    }))
+    .filter(p => p.text.length > 0);
+}
+
 /* ================= ROUTES ================= */
 
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
 app.post("/ocr", async (req, res) => {
+  const id = crypto.randomUUID();
+  const inputPath = path.join(TMP_DIR, `${id}.pdf`);
   let readStream;
-  const inputPath = path.join(__dirname, "input.pdf");
 
   try {
     const { pdf_url } = req.body;
@@ -79,15 +124,14 @@ app.post("/ocr", async (req, res) => {
 
     /* -------- DOWNLOAD -------- */
 
-    const buffer = Buffer.from(
-      await (await fetch(pdf_url)).arrayBuffer()
-    );
+    const buffer = Buffer.from(await (await fetch(pdf_url)).arrayBuffer());
     fs.writeFileSync(inputPath, buffer);
 
-    const pages = await getPdfPageCount(inputPath);
+    const pagesCount = await getPdfPageCount(inputPath);
 
-    // 🚨 DECISÃO ANTES DE QUALQUER OCR PESADO
-    if (pages > 10) {
+    /* -------- ADOBE ASYNC -------- */
+
+    if (pagesCount > 10) {
       const jobId = createJob();
 
       res.json({
@@ -95,10 +139,9 @@ app.post("/ocr", async (req, res) => {
         provider: "adobe",
         status: "processing",
         job_id: jobId,
-        pages
+        total_pages: pagesCount
       });
 
-      // 👇 PROCESSA EM BACKGROUND (FORA DO HTTP)
       (async () => {
         try {
           await processAdobeAsync(jobId, inputPath);
@@ -107,13 +150,10 @@ app.post("/ocr", async (req, res) => {
         }
       })();
 
-      return; // 🔴 ISSO É CRÍTICO
+      return;
     }
 
-
-
-
-    /* -------- ADOBE OCR -------- */
+    /* -------- ADOBE SYNC -------- */
 
     try {
       const credentials = new ServicePrincipalCredentials({
@@ -122,7 +162,6 @@ app.post("/ocr", async (req, res) => {
       });
 
       const pdfServices = new PDFServices({ credentials });
-
       readStream = fs.createReadStream(inputPath);
 
       const inputAsset = await pdfServices.upload({
@@ -131,14 +170,12 @@ app.post("/ocr", async (req, res) => {
       });
 
       const params = new ExtractPDFParams({
-        elementsToExtract: [
-          ExtractElementType.TEXT
-        ]
-            });
+        elementsToExtract: [ExtractElementType.TEXT]
+      });
 
       const job = new ExtractPDFJob({ inputAsset, params });
-
       const pollingURL = await pdfServices.submit({ job });
+
       const result = await pdfServices.getJobResult({
         pollingURL,
         resultType: ExtractPDFResult
@@ -147,7 +184,7 @@ app.post("/ocr", async (req, res) => {
       const asset = result.result.resource;
       const streamAsset = await pdfServices.getContent({ asset });
 
-      const zipPath = path.join(__dirname, "result.zip");
+      const zipPath = path.join(TMP_DIR, `${id}.zip`);
       await new Promise(resolve =>
         streamAsset.readStream
           .pipe(fs.createWriteStream(zipPath))
@@ -156,70 +193,14 @@ app.post("/ocr", async (req, res) => {
 
       const zip = new AdmZip(zipPath);
       const json = JSON.parse(zip.readAsText("structuredData.json"));
-
-      let output = "";
-
-        const pagesMap = {};
-
-      for (const el of json.elements) {
-        const page = el.Page || el.PageNumber || 1;
-
-        if (!pagesMap[page]) {
-          pagesMap[page] = [];
-        }
-
-        // TEXTO NORMAL
-        if (el.Text) {
-          pagesMap[page].push(el.Text);
-        }
-
-        // TABELAS (se existirem)
-        if (el.Type === "Table" && el.Rows) {
-          pagesMap[page].push("[TABELA]");
-          for (const row of el.Rows) {
-            const line = row.Cells
-              .map(c => (c.Text || "").replace(/\n/g, " ").trim())
-              .join(" | ");
-            pagesMap[page].push(line);
-          }
-          pagesMap[page].push("[/TABELA]");
-        }
-      }
-
-
-      const pages = Object.keys(pagesMap)
-      .sort((a, b) => Number(a) - Number(b))
-      .map(page => ({
-        page: Number(page),
-        text: pagesMap[page].join("\n")
-      }));
-
-
-          // TABELAS
-          if (el.Type === "Table" && el.Rows) {
-            output += "\n[TABELA]\n";
-
-            for (const row of el.Rows) {
-              const line = row.Cells
-                .map(c => (c.Text || "").replace(/\n/g, " ").trim())
-                .join(" | ");
-
-              output += line + "\n";
-            }
-
-            output += "[/TABELA]\n\n";
-          }
-        
-
+      const pages = buildPagesFromAdobe(json);
 
       return res.json({
-      success: true,
-      provider: "adobe",
-      total_pages: pages.length,
-      pages
-    });
-
-
+        success: true,
+        provider: "adobe",
+        total_pages: pages.length,
+        pages
+      });
 
     } catch (adobeErr) {
       if (
@@ -230,33 +211,28 @@ app.post("/ocr", async (req, res) => {
       }
     }
 
+    /* -------- FALLBACK DIGITAL -------- */
 
+    if (await hasDigitalText(inputPath)) {
+      const text = await extractTextDirect(inputPath);
+      const pages = splitTextIntoPages(text);
 
+      return res.json({
+        success: true,
+        provider: "direct",
+        total_pages: pages.length,
+        pages
+      });
+    }
 
-   /* -------- FALLBACK PDF DIGITAL -------- */
+    /* -------- OCR TESSERACT ASYNC -------- */
 
-if (await hasDigitalText(inputPath)) {
-  console.log("🔁 Adobe indisponível, usando extração direta");
-
-  const text = await extractTextDirect(inputPath);
-
-  return res.json({
-    success: true,
-    provider: "direct",
-    pages,
-    text
-  });
-}
-
-
-    /* -------- OCR GRATUITO (ASYNC) -------- */
-
-    if (pages > MAX_ASYNC_PAGES) {
+    if (pagesCount > MAX_ASYNC_PAGES) {
       return res.json({
         success: false,
-        provider: "async",
+        provider: "tesseract",
         reason: "PAGE_LIMIT_EXCEEDED",
-        pages,
+        total_pages: pagesCount,
         max_allowed: MAX_ASYNC_PAGES
       });
     }
@@ -265,9 +241,10 @@ if (await hasDigitalText(inputPath)) {
 
     res.json({
       success: false,
-      provider: "async",
+      provider: "tesseract",
       status: "processing",
-      job_id: jobId
+      job_id: jobId,
+      total_pages: pagesCount
     });
 
     let finished = false;
@@ -281,9 +258,17 @@ if (await hasDigitalText(inputPath)) {
     (async () => {
       try {
         const text = await ocrWithTesseract(inputPath);
+        const pages = splitTextIntoPages(text);
+
         finished = true;
         clearTimeout(timer);
-        setJobResult(jobId, text);
+
+        setJobResult(jobId, {
+          success: true,
+          provider: "tesseract",
+          total_pages: pages.length,
+          pages
+        });
       } catch (e) {
         finished = true;
         clearTimeout(timer);
@@ -296,20 +281,18 @@ if (await hasDigitalText(inputPath)) {
     res.status(500).json({ success: false, error: err.message });
   } finally {
     readStream?.destroy();
-    // ⚠️ NÃO apagar input.pdf aqui enquanto estiver testando síncrono
   }
 });
 
+/* ================= ADOBE ASYNC ================= */
 
-
-  async function processAdobeAsync(jobId, inputPath) {
+async function processAdobeAsync(jobId, inputPath) {
   const credentials = new ServicePrincipalCredentials({
     clientId: process.env.PDF_SERVICES_CLIENT_ID,
     clientSecret: process.env.PDF_SERVICES_CLIENT_SECRET
   });
 
   const pdfServices = new PDFServices({ credentials });
-
   const readStream = fs.createReadStream(inputPath);
 
   const inputAsset = await pdfServices.upload({
@@ -318,9 +301,7 @@ if (await hasDigitalText(inputPath)) {
   });
 
   const params = new ExtractPDFParams({
-    elementsToExtract: [
-      ExtractElementType.TEXT
-    ]
+    elementsToExtract: [ExtractElementType.TEXT]
   });
 
   const job = new ExtractPDFJob({ inputAsset, params });
@@ -334,7 +315,7 @@ if (await hasDigitalText(inputPath)) {
   const asset = result.result.resource;
   const streamAsset = await pdfServices.getContent({ asset });
 
-  const zipPath = path.join(__dirname, `${jobId}.zip`);
+  const zipPath = path.join(TMP_DIR, `${jobId}.zip`);
   await new Promise(resolve =>
     streamAsset.readStream
       .pipe(fs.createWriteStream(zipPath))
@@ -343,30 +324,15 @@ if (await hasDigitalText(inputPath)) {
 
   const zip = new AdmZip(zipPath);
   const json = JSON.parse(zip.readAsText("structuredData.json"));
-
-  let output = "";
-
-  for (const el of json.elements) {
-    if (el.Text) output += el.Text + "\n";
-
-    if (el.Type === "Table" && el.Rows) {
-      output += "\n[TABELA]\n";
-      for (const row of el.Rows) {
-        output += row.Cells
-          .map(c => (c.Text || "").replace(/\n/g, " ").trim())
-          .join(" | ") + "\n";
-      }
-      output += "[/TABELA]\n";
-    }
-  }
+  const pages = buildPagesFromAdobe(json);
 
   setJobResult(jobId, {
-  total_pages: pages.length,
-  pages
+    success: true,
+    provider: "adobe",
+    total_pages: pages.length,
+    pages
   });
-
 }
-
 
 /* ================= STATUS ================= */
 
@@ -376,6 +342,8 @@ app.get("/ocr/status/:id", (req, res) => {
   res.json(job);
 });
 
+/* ================= START ================= */
+
 app.listen(3000, () => {
-  console.log("✅ OCR API rodando (modo teste síncrono para PDF digital)");
+  console.log("✅ OCR API rodando — retorno por página");
 });
