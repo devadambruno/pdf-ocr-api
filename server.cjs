@@ -12,7 +12,7 @@ app.use(express.json());
 /* ================= CONFIG ================= */
 
 const TMP_DIR = path.join(__dirname, "tmp");
-const CHUNK_SIZE = 5;        // páginas por chunk
+const CHUNK_SIZE = 2;        // páginas por chunk
 const SLEEP_MS = 20_000;     // 20s entre chamadas GPT
 
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
@@ -95,7 +95,7 @@ async function callGPT(prompt, contexto, texto) {
     body: JSON.stringify({
       model: "gpt-4.1",
       temperature: 0,
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [
         {
           role: "user",
