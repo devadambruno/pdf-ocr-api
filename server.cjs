@@ -13,6 +13,7 @@ app.use(express.json());
 
 const TMP_DIR = path.join(__dirname, "tmp");
 const CHUNK_SIZE = 10;
+const jobs = {};
 
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
@@ -115,6 +116,12 @@ function matchByTexto(texto, lista, campo) {
 
 /* ================= CLAUDE ================= */
 
+function extractJsonFromClaude(text) {
+  const match = text.match(/\{[\s\S]*\}$/);
+  if (!match) throw new Error("JSON inválido retornado pelo Claude");
+  return JSON.parse(match[0]);
+}
+
 async function callClaude(prompt, contexto, texto) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -124,7 +131,7 @@ async function callClaude(prompt, contexto, texto) {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-5",
+      model: "claude-3-5-sonnet-20240620",
       temperature: 0,
       max_tokens: 4096,
       messages: [
@@ -143,35 +150,28 @@ ${texto}`
   });
 
   const data = await response.json();
-
-  if (!response.ok || !Array.isArray(data.content)) {
+  if (!response.ok) {
     throw new Error(`Claude error: ${JSON.stringify(data)}`);
   }
 
-  return JSON.parse(data.content[0].text);
+  return extractJsonFromClaude(data.content[0].text);
 }
 
-/* ================= ROUTE ================= */
+/* ================= PROCESS JOB ================= */
 
-app.post("/ocr/parse", async (req, res) => {
-  const id = crypto.randomUUID();
-  const pdfPath = path.join(TMP_DIR, `${id}.pdf`);
+async function processJob(jobId, payload) {
+  const {
+    pdf_url,
+    prompt_base,
+    json_tipos_certidao,
+    json_nivel_atividade,
+    json_qualificacao_obra,
+    json_qualificacao_especifica,
+    json_unidades
+  } = payload;
 
   try {
-    const {
-      pdf_url,
-      prompt_base,
-      json_tipos_certidao,
-      json_nivel_atividade,
-      json_qualificacao_obra,
-      json_qualificacao_especifica,
-      json_unidades
-    } = req.body;
-
-    if (!pdf_url || !prompt_base) {
-      return res.status(400).json({ error: "pdf_url e prompt_base obrigatórios" });
-    }
-
+    const pdfPath = path.join(TMP_DIR, `${jobId}.pdf`);
     const buffer = Buffer.from(await (await fetch(pdf_url)).arrayBuffer());
     fs.writeFileSync(pdfPath, buffer);
 
@@ -181,8 +181,7 @@ app.post("/ocr/parse", async (req, res) => {
 
     const contexto = {
       ultimoItem: null,
-      descricaoParcialAnterior: null,
-      servicosExtraidos: 0
+      descricaoParcialAnterior: null
     };
 
     const resultadoFinal = {
@@ -190,16 +189,18 @@ app.post("/ocr/parse", async (req, res) => {
       Servicos: []
     };
 
-    for (const chunk of chunks) {
-      const texto = chunk.map(p => `--- PAGINA ${p.page} ---\n${p.text}`).join("\n\n");
+    jobs[jobId].progress.totalChunks = chunks.length;
+
+    for (let i = 0; i < chunks.length; i++) {
+      jobs[jobId].progress.chunkAtual = i + 1;
+
+      const texto = chunks[i]
+        .map(p => `--- PAGINA ${p.page} ---\n${p.text}`)
+        .join("\n\n");
+
       const parcial = await callClaude(prompt_base, contexto, texto);
 
-      if (parcial.Cabecalho) {
-        resultadoFinal.Cabecalho = {
-          ...resultadoFinal.Cabecalho,
-          ...parcial.Cabecalho
-        };
-      }
+      Object.assign(resultadoFinal.Cabecalho, parcial.Cabecalho || {});
 
       for (const s of parcial.Servicos || []) {
         if (!resultadoFinal.Servicos.find(x => x.Item === s.Item)) {
@@ -216,43 +217,56 @@ app.post("/ocr/parse", async (req, res) => {
     /* ===== MATCH FINAL ===== */
 
     resultadoFinal.Cabecalho.TipoCertidao =
-      matchTipoCertidao(
-        resultadoFinal.Cabecalho.TipoCertidaoTexto,
-        json_tipos_certidao
-      );
+      matchTipoCertidao(resultadoFinal.Cabecalho.TipoCertidaoTexto, json_tipos_certidao);
 
     resultadoFinal.Cabecalho.NivelAtividade =
-      matchByTexto(
-        resultadoFinal.Cabecalho.NivelAtividadeTexto,
-        json_nivel_atividade,
-        "nivelAtividade"
-      );
+      matchByTexto(resultadoFinal.Cabecalho.NivelAtividadeTexto, json_nivel_atividade, "nivelAtividade");
 
     resultadoFinal.Cabecalho.QualificacaoObra =
-      matchByTexto(
-        resultadoFinal.Cabecalho.QualificacaoObraTexto,
-        json_qualificacao_obra,
-        "qualificacao"
-      );
+      matchByTexto(resultadoFinal.Cabecalho.QualificacaoObraTexto, json_qualificacao_obra, "qualificacao");
 
     resultadoFinal.Cabecalho.QualificacaoEspecifica =
-      matchByTexto(
-        resultadoFinal.Cabecalho.QualificacaoEspecificaTexto,
-        json_qualificacao_especifica,
-        "qualificacaoEspecifica"
-      );
+      matchByTexto(resultadoFinal.Cabecalho.QualificacaoEspecificaTexto, json_qualificacao_especifica, "qualificacaoEspecifica");
 
     resultadoFinal.Servicos = resultadoFinal.Servicos.map(s => ({
       ...s,
       Unidade: matchByTexto(s.UnidadeTexto, json_unidades, "unidadeNome")
     }));
 
-    return res.json({ success: true, resultado: resultadoFinal });
+    jobs[jobId].status = "done";
+    jobs[jobId].resultado = resultadoFinal;
 
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
+  } catch (err) {
+    jobs[jobId].status = "error";
+    jobs[jobId].error = err.message;
   }
+}
+
+/* ================= ROUTES ================= */
+
+app.post("/ocr/parse", (req, res) => {
+  const jobId = crypto.randomUUID();
+
+  jobs[jobId] = {
+    status: "processing",
+    progress: { chunkAtual: 0, totalChunks: 0 },
+    resultado: null,
+    error: null
+  };
+
+  processJob(jobId, req.body);
+
+  res.json({
+    success: true,
+    job_id: jobId,
+    status: "processing"
+  });
+});
+
+app.get("/ocr/status/:id", (req, res) => {
+  const job = jobs[req.params.id];
+  if (!job) return res.status(404).json({ error: "Job não encontrado" });
+  res.json(job);
 });
 
 /* ================= HEALTH ================= */
@@ -260,5 +274,5 @@ app.post("/ocr/parse", async (req, res) => {
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
 app.listen(3000, () => {
-  console.log("✅ OCR + Claude + Match determinístico rodando");
+  console.log("✅ OCR + Claude + Match + JOB ID rodando");
 });
