@@ -6,6 +6,7 @@ const path = require("path");
 const { exec } = require("child_process");
 const AdmZip = require("adm-zip");
 const crypto = require("crypto");
+const fetch = require("node-fetch");
 
 const {
   ServicePrincipalCredentials,
@@ -18,16 +19,14 @@ const {
 } = require("@adobe/pdfservices-node-sdk");
 
 const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
-const { createJob, setJobResult, setJobError, getJob } = require("./jobs");
 
 const app = express();
 app.use(express.json());
 
 /* ================= CONFIG ================= */
 
-const MAX_ASYNC_PAGES = 20;
-const JOB_TIMEOUT = 3 * 60 * 1000;
 const TMP_DIR = path.join(__dirname, "tmp");
+const CHUNK_SIZE = 10;
 
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
@@ -36,7 +35,7 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 app.use((req, res, next) => {
   if (req.path === "/health") return next();
   if (req.headers["x-api-key"] !== process.env.API_KEY) {
-    return res.status(401).json({ success: false, error: "Unauthorized" });
+    return res.status(401).json({ error: "Unauthorized" });
   }
   next();
 });
@@ -51,299 +50,182 @@ function execAsync(cmd) {
   });
 }
 
-async function getPdfPageCount(pdfPath) {
-  const out = await execAsync(`pdfinfo "${pdfPath}"`);
-  const match = out.match(/Pages:\s+(\d+)/);
-  if (!match) throw new Error("Não foi possível contar páginas");
-  return parseInt(match[1], 10);
-}
-
-async function hasDigitalText(pdfPath) {
-  const text = await execAsync(`pdftotext "${pdfPath}" - -f 1 -l 1`);
-  return text.trim().length > 50;
-}
-
 async function extractTextDirect(pdfPath) {
   return await execAsync(`pdftotext "${pdfPath}" -`);
-}
-
-function buildPagesFromAdobe(json) {
-  const pagesMap = {};
-
-  for (const el of json.elements) {
-    const page = el.Page || el.PageNumber || 1;
-    if (!pagesMap[page]) pagesMap[page] = [];
-
-    if (el.Text) pagesMap[page].push(el.Text);
-
-    if (el.Type === "Table" && el.Rows) {
-      pagesMap[page].push("[TABELA]");
-      for (const row of el.Rows) {
-        pagesMap[page].push(
-          row.Cells
-            .map(c => (c.Text || "").replace(/\n/g, " ").trim())
-            .join(" | ")
-        );
-      }
-      pagesMap[page].push("[/TABELA]");
-    }
-  }
-
-  return Object.keys(pagesMap)
-    .sort((a, b) => Number(a) - Number(b))
-    .map(page => ({
-      page: Number(page),
-      text: pagesMap[page].join("\n")
-    }));
 }
 
 function splitTextIntoPages(text) {
   return text
     .split("\f")
-    .map((t, i) => ({
-      page: i + 1,
-      text: t.trim()
-    }))
-    .filter(p => p.text.length > 0);
+    .map((t, i) => ({ page: i + 1, text: t.trim() }))
+    .filter(p => p.text);
 }
 
-/* ================= ROUTES ================= */
+function chunkPages(pages, size) {
+  const chunks = [];
+  for (let i = 0; i < pages.length; i += size) {
+    chunks.push(pages.slice(i, i + size));
+  }
+  return chunks;
+}
 
-app.get("/health", (_, res) => res.json({ status: "ok" }));
+/* ================= CLAUDE ================= */
 
-app.post("/ocr", async (req, res) => {
+async function callClaude({ prompt, contexto, texto }) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": process.env.CLAUDE_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 4096,
+      temperature: 0,
+      messages: [
+        {
+          role: "user",
+          content: `
+${prompt}
+
+CONTEXTO:
+${JSON.stringify(contexto, null, 2)}
+
+TEXTO OCR:
+${texto}
+          `
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+  return JSON.parse(data.content[0].text);
+}
+
+/* ================= MERGE ================= */
+
+function mergeResultado(final, parcial, contexto) {
+  if (!final.Cabecalho && parcial.Cabecalho) {
+    final.Cabecalho = parcial.Cabecalho;
+  }
+
+  for (const serv of parcial.Servicos || []) {
+    const existente = final.Servicos.find(s => s.Item === serv.Item);
+
+    if (existente) {
+      existente.Descricao += " " + serv.Descricao;
+      existente.Quantidade ||= serv.Quantidade;
+      existente.Unidade ||= serv.Unidade;
+      existente.Categoria ||= serv.Categoria;
+    } else {
+      final.Servicos.push(serv);
+    }
+  }
+
+  if (parcial.Meta) {
+    contexto.ultimoItem = parcial.Meta.ultimoItemNesteLote;
+    contexto.descricaoParcialAnterior = parcial.Meta.descricaoFinalParcial;
+    contexto.servicosExtraidos = final.Servicos.length;
+  }
+}
+
+/* ================= ROUTE OCR + PARSE ================= */
+
+app.post("/ocr/parse", async (req, res) => {
   const id = crypto.randomUUID();
-  const inputPath = path.join(TMP_DIR, `${id}.pdf`);
-  let readStream;
+  const pdfPath = path.join(TMP_DIR, `${id}.pdf`);
 
   try {
-    const { pdf_url } = req.body;
-    if (!pdf_url) {
-      return res.status(400).json({ error: "pdf_url é obrigatório" });
+    const {
+      pdf_url,
+      prompt_base,
+      json_tipos_certidao,
+      json_nivel_atividade,
+      json_qualificacao_obra,
+      json_qualificacao_especifica,
+      json_unidades
+    } = req.body;
+
+    if (!pdf_url || !prompt_base) {
+      return res.status(400).json({ error: "pdf_url e prompt_base são obrigatórios" });
     }
 
     /* -------- DOWNLOAD -------- */
 
     const buffer = Buffer.from(await (await fetch(pdf_url)).arrayBuffer());
-    fs.writeFileSync(inputPath, buffer);
+    fs.writeFileSync(pdfPath, buffer);
 
-    const pagesCount = await getPdfPageCount(inputPath);
+    /* -------- OCR DIGITAL -------- */
 
-    /* -------- ADOBE ASYNC -------- */
+    const rawText = await extractTextDirect(pdfPath);
+    const pages = splitTextIntoPages(rawText);
+    const chunks = chunkPages(pages, CHUNK_SIZE);
 
-    if (pagesCount > 10) {
-      const jobId = createJob();
+    /* -------- CONTEXTO -------- */
 
-      res.json({
-        success: false,
-        provider: "adobe",
-        status: "processing",
-        job_id: jobId,
-        total_pages: pagesCount
+    const contexto = {
+      ultimoItem: null,
+      descricaoParcialAnterior: null,
+      servicosExtraidos: 0
+    };
+
+    const resultadoFinal = {
+      Cabecalho: null,
+      Servicos: []
+    };
+
+    /* -------- LOOP LLM -------- */
+
+    for (const chunk of chunks) {
+      const texto = chunk.map(p => `--- PAGINA ${p.page} ---\n${p.text}`).join("\n\n");
+
+      const prompt = `
+${prompt_base}
+
+TIPOS_CERTIDAO:
+${JSON.stringify(json_tipos_certidao)}
+
+NIVEL_ATIVIDADE:
+${JSON.stringify(json_nivel_atividade)}
+
+QUALIFICACAO_OBRA:
+${JSON.stringify(json_qualificacao_obra)}
+
+QUALIFICACAO_ESPECIFICA:
+${JSON.stringify(json_qualificacao_especifica)}
+
+UNIDADES:
+${JSON.stringify(json_unidades)}
+      `;
+
+      const parcial = await callClaude({
+        prompt,
+        contexto,
+        texto
       });
 
-      (async () => {
-        try {
-          await processAdobeAsync(jobId, inputPath);
-        } catch (e) {
-          setJobError(jobId, e.message);
-        }
-      })();
-
-      return;
+      mergeResultado(resultadoFinal, parcial, contexto);
     }
 
-    /* -------- ADOBE SYNC -------- */
-
-    try {
-      const credentials = new ServicePrincipalCredentials({
-        clientId: process.env.PDF_SERVICES_CLIENT_ID,
-        clientSecret: process.env.PDF_SERVICES_CLIENT_SECRET
-      });
-
-      const pdfServices = new PDFServices({ credentials });
-      readStream = fs.createReadStream(inputPath);
-
-      const inputAsset = await pdfServices.upload({
-        readStream,
-        mimeType: MimeType.PDF
-      });
-
-      const params = new ExtractPDFParams({
-        elementsToExtract: [ExtractElementType.TEXT]
-      });
-
-      const job = new ExtractPDFJob({ inputAsset, params });
-      const pollingURL = await pdfServices.submit({ job });
-
-      const result = await pdfServices.getJobResult({
-        pollingURL,
-        resultType: ExtractPDFResult
-      });
-
-      const asset = result.result.resource;
-      const streamAsset = await pdfServices.getContent({ asset });
-
-      const zipPath = path.join(TMP_DIR, `${id}.zip`);
-      await new Promise(resolve =>
-        streamAsset.readStream
-          .pipe(fs.createWriteStream(zipPath))
-          .on("finish", resolve)
-      );
-
-      const zip = new AdmZip(zipPath);
-      const json = JSON.parse(zip.readAsText("structuredData.json"));
-      const pages = buildPagesFromAdobe(json);
-
-      return res.json({
-        success: true,
-        provider: "adobe",
-        total_pages: pages.length,
-        pages
-      });
-
-    } catch (adobeErr) {
-      if (
-        adobeErr?._statusCode !== 429 &&
-        adobeErr?._errorCode !== "QUOTA_EXCEEDED"
-      ) {
-        throw adobeErr;
-      }
-    }
-
-    /* -------- FALLBACK DIGITAL -------- */
-
-    if (await hasDigitalText(inputPath)) {
-      const text = await extractTextDirect(inputPath);
-      const pages = splitTextIntoPages(text);
-
-      return res.json({
-        success: true,
-        provider: "direct",
-        total_pages: pages.length,
-        pages
-      });
-    }
-
-    /* -------- OCR TESSERACT ASYNC -------- */
-
-    if (pagesCount > MAX_ASYNC_PAGES) {
-      return res.json({
-        success: false,
-        provider: "tesseract",
-        reason: "PAGE_LIMIT_EXCEEDED",
-        total_pages: pagesCount,
-        max_allowed: MAX_ASYNC_PAGES
-      });
-    }
-
-    const jobId = createJob();
-
-    res.json({
-      success: false,
-      provider: "tesseract",
-      status: "processing",
-      job_id: jobId,
-      total_pages: pagesCount
+    return res.json({
+      success: true,
+      resultado: resultadoFinal
     });
 
-    let finished = false;
-
-    const timer = setTimeout(() => {
-      if (!finished) {
-        setJobError(jobId, "OCR excedeu tempo máximo");
-      }
-    }, JOB_TIMEOUT);
-
-    (async () => {
-      try {
-        const text = await ocrWithTesseract(inputPath);
-        const pages = splitTextIntoPages(text);
-
-        finished = true;
-        clearTimeout(timer);
-
-        setJobResult(jobId, {
-          success: true,
-          provider: "tesseract",
-          total_pages: pages.length,
-          pages
-        });
-      } catch (e) {
-        finished = true;
-        clearTimeout(timer);
-        setJobError(jobId, e.message);
-      }
-    })();
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: err.message });
-  } finally {
-    readStream?.destroy();
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-/* ================= ADOBE ASYNC ================= */
+/* ================= HEALTH ================= */
 
-async function processAdobeAsync(jobId, inputPath) {
-  const credentials = new ServicePrincipalCredentials({
-    clientId: process.env.PDF_SERVICES_CLIENT_ID,
-    clientSecret: process.env.PDF_SERVICES_CLIENT_SECRET
-  });
-
-  const pdfServices = new PDFServices({ credentials });
-  const readStream = fs.createReadStream(inputPath);
-
-  const inputAsset = await pdfServices.upload({
-    readStream,
-    mimeType: MimeType.PDF
-  });
-
-  const params = new ExtractPDFParams({
-    elementsToExtract: [ExtractElementType.TEXT]
-  });
-
-  const job = new ExtractPDFJob({ inputAsset, params });
-  const pollingURL = await pdfServices.submit({ job });
-
-  const result = await pdfServices.getJobResult({
-    pollingURL,
-    resultType: ExtractPDFResult
-  });
-
-  const asset = result.result.resource;
-  const streamAsset = await pdfServices.getContent({ asset });
-
-  const zipPath = path.join(TMP_DIR, `${jobId}.zip`);
-  await new Promise(resolve =>
-    streamAsset.readStream
-      .pipe(fs.createWriteStream(zipPath))
-      .on("finish", resolve)
-  );
-
-  const zip = new AdmZip(zipPath);
-  const json = JSON.parse(zip.readAsText("structuredData.json"));
-  const pages = buildPagesFromAdobe(json);
-
-  setJobResult(jobId, {
-    success: true,
-    provider: "adobe",
-    total_pages: pages.length,
-    pages
-  });
-}
-
-/* ================= STATUS ================= */
-
-app.get("/ocr/status/:id", (req, res) => {
-  const job = getJob(req.params.id);
-  if (!job) return res.status(404).json({ error: "Job não encontrado" });
-  res.json(job);
-});
+app.get("/health", (_, res) => res.json({ status: "ok" }));
 
 /* ================= START ================= */
 
 app.listen(3000, () => {
-  console.log("✅ OCR API rodando — retorno por página");
+  console.log("✅ OCR + Claude API rodando — JSON final automático");
 });
