@@ -12,7 +12,7 @@ app.use(express.json());
 /* ================= CONFIG ================= */
 
 const TMP_DIR = path.join(__dirname, "tmp");
-const CHUNK_SIZE = 10;
+const CHUNK_SIZE = 5;
 const jobs = {};
 
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
@@ -142,7 +142,7 @@ async function callGPT(prompt, contexto, texto) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: "gpt-4.1",
+      model: "gpt-4o",
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
@@ -217,13 +217,23 @@ async function processJob(jobId, payload) {
         .map(p => `--- PAGINA ${p.page} ---\n${p.text}`)
         .join("\n\n");
 
-      let parcial;
-      for (let tentativa = 1; tentativa <= 2; tentativa++) {
+     let parcial;
+      for (let tentativa = 1; tentativa <= 3; tentativa++) {
         try {
           parcial = await callGPT(prompt_base, contexto, texto);
           break;
         } catch (e) {
-          if (tentativa === 2) throw e;
+          const msg = e.message || "";
+
+          // ⏳ Rate limit → esperar e tentar de novo
+          if (msg.includes("rate_limit")) {
+            console.warn(`⏳ Rate limit, aguardando 20s (tentativa ${tentativa})`);
+            await new Promise(r => setTimeout(r, 20000));
+            continue;
+          }
+
+          // ❌ Outro erro → aborta
+          if (tentativa === 3) throw e;
         }
       }
 
