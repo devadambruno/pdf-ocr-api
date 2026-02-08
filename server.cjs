@@ -3,22 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-const { exec } = require("child_process");
-const AdmZip = require("adm-zip");
 const crypto = require("crypto");
-
-const {
-  ServicePrincipalCredentials,
-  PDFServices,
-  MimeType,
-  ExtractPDFParams,
-  ExtractElementType,
-  ExtractPDFJob,
-  ExtractPDFResult
-} = require("@adobe/pdfservices-node-sdk");
-
-const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
-
+const { exec } = require("child_process");
 
 const app = express();
 app.use(express.json());
@@ -51,7 +37,7 @@ function execAsync(cmd) {
 }
 
 async function extractTextDirect(pdfPath) {
-  return await execAsync(`pdftotext "${pdfPath}" -`);
+  return execAsync(`pdftotext "${pdfPath}" -`);
 }
 
 function splitTextIntoPages(text) {
@@ -69,9 +55,67 @@ function chunkPages(pages, size) {
   return chunks;
 }
 
+function normalize(str = "") {
+  return str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/* ================= MATCH ================= */
+
+function matchTipoCertidao(texto, lista) {
+  if (!texto) return null;
+  const t = texto.toUpperCase();
+  const hasCAT = t.includes("CAT");
+  const hasCAO = t.includes("CAO");
+  const siglas = ["CREA", "CAU", "CRA", "CRT", "CFTA"];
+
+  for (const sigla of siglas) {
+    if (t.includes(sigla)) {
+      const tipo = hasCAT ? "CAT" : hasCAO ? "CAO" : null;
+      if (!tipo) return null;
+
+      const found = lista.find(
+        i => i.tipoCertidao.includes(tipo) && i.tipoCertidao.includes(sigla)
+      );
+      if (found) return found.id;
+    }
+  }
+  return null;
+}
+
+function matchByTexto(texto, lista, campo) {
+  if (!texto) return null;
+  const t = normalize(texto);
+
+  let best = null;
+  let scoreMax = 0;
+
+  for (const item of lista) {
+    const nome = normalize(item[campo]);
+    let score = 0;
+
+    if (nome.includes(t) || t.includes(nome)) score += 3;
+
+    const parts = nome.match(/[a-z0-9]{3,}/g) || [];
+    for (const p of parts) {
+      if (t.includes(p)) score += 1;
+    }
+
+    if (score > scoreMax) {
+      scoreMax = score;
+      best = item;
+    }
+  }
+
+  return scoreMax > 0 ? best.id : null;
+}
+
 /* ================= CLAUDE ================= */
 
-async function callClaude({ prompt, contexto, texto }) {
+async function callClaude(prompt, contexto, texto) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -81,57 +125,33 @@ async function callClaude({ prompt, contexto, texto }) {
     },
     body: JSON.stringify({
       model: "claude-3-5-sonnet-20241022",
-      max_tokens: 4096,
       temperature: 0,
+      max_tokens: 4096,
       messages: [
         {
           role: "user",
-          content: `
-${prompt}
+          content: `${prompt}
 
 CONTEXTO:
 ${JSON.stringify(contexto, null, 2)}
 
 TEXTO OCR:
-${texto}
-          `
+${texto}`
         }
       ]
     })
   });
 
   const data = await response.json();
+
+  if (!response.ok || !Array.isArray(data.content)) {
+    throw new Error(`Claude error: ${JSON.stringify(data)}`);
+  }
+
   return JSON.parse(data.content[0].text);
 }
 
-/* ================= MERGE ================= */
-
-function mergeResultado(final, parcial, contexto) {
-  if (!final.Cabecalho && parcial.Cabecalho) {
-    final.Cabecalho = parcial.Cabecalho;
-  }
-
-  for (const serv of parcial.Servicos || []) {
-    const existente = final.Servicos.find(s => s.Item === serv.Item);
-
-    if (existente) {
-      existente.Descricao += " " + serv.Descricao;
-      existente.Quantidade ||= serv.Quantidade;
-      existente.Unidade ||= serv.Unidade;
-      existente.Categoria ||= serv.Categoria;
-    } else {
-      final.Servicos.push(serv);
-    }
-  }
-
-  if (parcial.Meta) {
-    contexto.ultimoItem = parcial.Meta.ultimoItemNesteLote;
-    contexto.descricaoParcialAnterior = parcial.Meta.descricaoFinalParcial;
-    contexto.servicosExtraidos = final.Servicos.length;
-  }
-}
-
-/* ================= ROUTE OCR + PARSE ================= */
+/* ================= ROUTE ================= */
 
 app.post("/ocr/parse", async (req, res) => {
   const id = crypto.randomUUID();
@@ -149,21 +169,15 @@ app.post("/ocr/parse", async (req, res) => {
     } = req.body;
 
     if (!pdf_url || !prompt_base) {
-      return res.status(400).json({ error: "pdf_url e prompt_base são obrigatórios" });
+      return res.status(400).json({ error: "pdf_url e prompt_base obrigatórios" });
     }
-
-    /* -------- DOWNLOAD -------- */
 
     const buffer = Buffer.from(await (await fetch(pdf_url)).arrayBuffer());
     fs.writeFileSync(pdfPath, buffer);
 
-    /* -------- OCR DIGITAL -------- */
-
     const rawText = await extractTextDirect(pdfPath);
     const pages = splitTextIntoPages(rawText);
     const chunks = chunkPages(pages, CHUNK_SIZE);
-
-    /* -------- CONTEXTO -------- */
 
     const contexto = {
       ultimoItem: null,
@@ -172,47 +186,68 @@ app.post("/ocr/parse", async (req, res) => {
     };
 
     const resultadoFinal = {
-      Cabecalho: null,
+      Cabecalho: {},
       Servicos: []
     };
 
-    /* -------- LOOP LLM -------- */
-
     for (const chunk of chunks) {
       const texto = chunk.map(p => `--- PAGINA ${p.page} ---\n${p.text}`).join("\n\n");
+      const parcial = await callClaude(prompt_base, contexto, texto);
 
-      const prompt = `
-${prompt_base}
+      if (parcial.Cabecalho) {
+        resultadoFinal.Cabecalho = {
+          ...resultadoFinal.Cabecalho,
+          ...parcial.Cabecalho
+        };
+      }
 
-TIPOS_CERTIDAO:
-${JSON.stringify(json_tipos_certidao)}
+      for (const s of parcial.Servicos || []) {
+        if (!resultadoFinal.Servicos.find(x => x.Item === s.Item)) {
+          resultadoFinal.Servicos.push(s);
+        }
+      }
 
-NIVEL_ATIVIDADE:
-${JSON.stringify(json_nivel_atividade)}
-
-QUALIFICACAO_OBRA:
-${JSON.stringify(json_qualificacao_obra)}
-
-QUALIFICACAO_ESPECIFICA:
-${JSON.stringify(json_qualificacao_especifica)}
-
-UNIDADES:
-${JSON.stringify(json_unidades)}
-      `;
-
-      const parcial = await callClaude({
-        prompt,
-        contexto,
-        texto
-      });
-
-      mergeResultado(resultadoFinal, parcial, contexto);
+      if (parcial.Meta) {
+        contexto.ultimoItem = parcial.Meta.ultimoItemNesteLote;
+        contexto.descricaoParcialAnterior = parcial.Meta.descricaoFinalParcial;
+      }
     }
 
-    return res.json({
-      success: true,
-      resultado: resultadoFinal
-    });
+    /* ===== MATCH FINAL ===== */
+
+    resultadoFinal.Cabecalho.TipoCertidao =
+      matchTipoCertidao(
+        resultadoFinal.Cabecalho.TipoCertidaoTexto,
+        json_tipos_certidao
+      );
+
+    resultadoFinal.Cabecalho.NivelAtividade =
+      matchByTexto(
+        resultadoFinal.Cabecalho.NivelAtividadeTexto,
+        json_nivel_atividade,
+        "nivelAtividade"
+      );
+
+    resultadoFinal.Cabecalho.QualificacaoObra =
+      matchByTexto(
+        resultadoFinal.Cabecalho.QualificacaoObraTexto,
+        json_qualificacao_obra,
+        "qualificacao"
+      );
+
+    resultadoFinal.Cabecalho.QualificacaoEspecifica =
+      matchByTexto(
+        resultadoFinal.Cabecalho.QualificacaoEspecificaTexto,
+        json_qualificacao_especifica,
+        "qualificacaoEspecifica"
+      );
+
+    resultadoFinal.Servicos = resultadoFinal.Servicos.map(s => ({
+      ...s,
+      Unidade: matchByTexto(s.UnidadeTexto, json_unidades, "unidadeNome")
+    }));
+
+    return res.json({ success: true, resultado: resultadoFinal });
 
   } catch (e) {
     console.error(e);
@@ -224,8 +259,6 @@ ${JSON.stringify(json_unidades)}
 
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
-/* ================= START ================= */
-
 app.listen(3000, () => {
-  console.log("✅ OCR + Claude API rodando — JSON final automático");
+  console.log("✅ OCR + Claude + Match determinístico rodando");
 });
