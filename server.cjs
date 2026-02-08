@@ -124,7 +124,7 @@ async function callClaude(prompt, contexto, texto) {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-3-5-sonnet-latest",
       temperature: 0,
       max_tokens: 4096,
       messages: [
