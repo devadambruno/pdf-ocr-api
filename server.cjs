@@ -117,10 +117,33 @@ function matchByTexto(texto, lista, campo) {
 /* ================= CLAUDE ================= */
 
 function extractJsonFromClaude(text) {
-  const match = text.match(/\{[\s\S]*\}$/);
-  if (!match) throw new Error("JSON inválido retornado pelo Claude");
-  return JSON.parse(match[0]);
+  if (!text || typeof text !== "string") {
+    throw new Error("Claude retornou resposta vazia ou inválida");
+  }
+
+  // Remove blocos markdown
+  let cleaned = text
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    throw new Error("Claude não retornou JSON detectável");
+  }
+
+  const jsonString = cleaned.slice(firstBrace, lastBrace + 1);
+
+  try {
+    return JSON.parse(jsonString);
+  } catch (err) {
+    console.error("JSON bruto do Claude:\n", jsonString);
+    throw new Error("Falha ao fazer parse do JSON do Claude");
+  }
 }
+
 
 async function callClaude(prompt, contexto, texto) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
