@@ -221,7 +221,16 @@ async function processJob(jobId, payload) {
         .map(p => `--- PAGINA ${p.page} ---\n${p.text}`)
         .join("\n\n");
 
-      const parcial = await callClaude(prompt_base, contexto, texto);
+      let parcial;
+      for (let tentativa = 1; tentativa <= 2; tentativa++) {
+        try {
+          parcial = await callClaude(prompt_base, contexto, texto);
+          break;
+        } catch (e) {
+          if (tentativa === 2) throw e;
+        }
+      }
+
 
       Object.assign(resultadoFinal.Cabecalho, parcial.Cabecalho || {});
 
