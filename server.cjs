@@ -116,57 +116,40 @@ function matchByTexto(texto, lista, campo) {
 
 /* ================= CLAUDE ================= */
 
-function extractJsonFromClaude(text, jobId, chunkIndex) {
+function extractJsonSafe(text) {
   if (!text || typeof text !== "string") {
-    throw new Error("Claude retornou resposta vazia");
+    throw new Error("Resposta vazia do GPT");
   }
 
-  let cleaned = text
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
 
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
-
-  if (firstBrace === -1 || lastBrace === -1) {
-    throw new Error("Claude não retornou JSON detectável");
+  if (first === -1 || last === -1) {
+    throw new Error("GPT não retornou JSON");
   }
 
-  const jsonString = cleaned.slice(firstBrace, lastBrace + 1);
-
-  try {
-    return JSON.parse(jsonString);
-  } catch (err) {
-    console.error("⛔ JSON inválido do Claude (chunk " + chunkIndex + "):");
-    console.error(jsonString);
-
-    // 🔥 salva no job para inspeção via GET
-    if (jobId && jobs[jobId]) {
-      jobs[jobId].error = "JSON inválido retornado pelo Claude";
-      jobs[jobId].rawClaude = jsonString;
-      jobs[jobId].rawClaudeOriginal = text;
-    }
-
-    throw new Error("Falha ao fazer parse do JSON do Claude");
-  }
+  return JSON.parse(text.slice(first, last + 1));
 }
 
 
 
-async function callClaude(prompt, contexto, texto) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+
+async function callGPT(prompt, contexto, texto) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      "x-api-key": process.env.CLAUDE_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json"
+      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-5",
+      model: "gpt-4.1",
       temperature: 0,
-      max_tokens: 4096,
+      response_format: { type: "json_object" },
       messages: [
+        {
+          role: "system",
+          content: "Você é um parser jurídico. Responda APENAS em JSON válido."
+        },
         {
           role: "user",
           content: `${prompt}
@@ -182,11 +165,15 @@ ${texto}`
   });
 
   const data = await response.json();
+
   if (!response.ok) {
-    throw new Error(`Claude error: ${JSON.stringify(data)}`);
+    throw new Error(`GPT error: ${JSON.stringify(data)}`);
   }
 
-  return extractJsonFromClaude(data.content[0].text);
+  // 🔥 GPT já garante JSON, mas mantemos fallback
+  return data.choices?.[0]?.message?.content
+    ? JSON.parse(data.choices[0].message.content)
+    : extractJsonSafe(JSON.stringify(data));
 }
 
 /* ================= PROCESS JOB ================= */
@@ -233,7 +220,7 @@ async function processJob(jobId, payload) {
       let parcial;
       for (let tentativa = 1; tentativa <= 2; tentativa++) {
         try {
-          parcial = await callClaude(prompt_base, contexto, texto);
+          parcial = await callGPT(prompt_base, contexto, texto);
           break;
         } catch (e) {
           if (tentativa === 2) throw e;
