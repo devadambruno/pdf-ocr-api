@@ -12,8 +12,8 @@ app.use(express.json());
 /* ================= CONFIG ================= */
 
 const TMP_DIR = path.join(__dirname, "tmp");
-const CHUNK_SIZE = 5;          // páginas por chunk
-const SLEEP_MS = 20_000;       // 20s entre chamadas GPT
+const CHUNK_SIZE = 5;        // páginas por chunk
+const SLEEP_MS = 20_000;     // 20s entre chamadas GPT
 
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
@@ -21,7 +21,7 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
 app.use((req, res, next) => {
   if (req.path === "/health") return next();
-  if (req.headers["x-api-key"] !== process.env.API_KEY) {
+  if (process.env.API_KEY && req.headers["x-api-key"] !== process.env.API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   next();
@@ -61,7 +61,6 @@ function sleep(ms) {
 }
 
 /* ================= XANO ================= */
-/* (sem API key) */
 
 async function xanoCreateJob(data) {
   return fetch(`${process.env.XANO_BASE_URL}/ocr_jobs`, {
@@ -85,17 +84,6 @@ async function xanoGetJob(job_id) {
 }
 
 /* ================= GPT ================= */
-
-function extractJson(text) {
-  if (!text) throw new Error("GPT retornou texto vazio");
-
-  const cleaned = text
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
-
-  return JSON.parse(cleaned);
-}
 
 async function callGPT(prompt, contexto, texto) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -129,72 +117,116 @@ ${texto}`
     throw new Error(`GPT error: ${JSON.stringify(data)}`);
   }
 
-  return extractJson(data.choices[0].message.content);
+  // 🔥 RETORNA TEXTO CRU — SEM PARSE
+  return data.choices[0].message.content;
 }
 
 /* ================= WORKER ================= */
 
 async function processJob(job_id, pdf_url, prompt_base) {
-  const pdfPath = path.join(TMP_DIR, `${job_id}.pdf`);
-
-  // download PDF
-  const buffer = Buffer.from(await (await fetch(pdf_url)).arrayBuffer());
-  fs.writeFileSync(pdfPath, buffer);
-
-  // OCR digital
-  const rawText = await extractTextDirect(pdfPath);
-  const pages = splitTextIntoPages(rawText);
-  const chunks = chunkPages(pages, CHUNK_SIZE);
-
-  await xanoUpdateJob(job_id, {
-    total_pages: pages.length,
-    chunk_size: CHUNK_SIZE,
-    total_chunks: chunks.length,
-    chunk_atual: 0,
-    updated_at: new Date()
-  });
-
-  const resultadoFinal = { Cabecalho: {}, Servicos: [] };
-  const contexto = {
-    ultimoItem: null,
-    descricaoParcialAnterior: null
-  };
-
-  for (let i = 0; i < chunks.length; i++) {
-    const texto = chunks[i]
-      .map(p => `--- PAGINA ${p.page} ---\n${p.text}`)
-      .join("\n\n");
-
-    const parcial = await callGPT(prompt_base, contexto, texto);
-
-    if (parcial.Cabecalho) {
-      Object.assign(resultadoFinal.Cabecalho, parcial.Cabecalho);
-    }
-
-    for (const s of parcial.Servicos || []) {
-      if (!resultadoFinal.Servicos.find(x => x.Item === s.Item)) {
-        resultadoFinal.Servicos.push(s);
-      }
-    }
-
-    if (parcial.Meta) {
-      contexto.ultimoItem = parcial.Meta.ultimoItemNesteLote;
-      contexto.descricaoParcialAnterior = parcial.Meta.descricaoFinalParcial;
-    }
-
+  try {
     await xanoUpdateJob(job_id, {
-      chunk_atual: i + 1,
+      status: "processing",
+      started_at: new Date(),
       updated_at: new Date()
     });
 
-    await sleep(SLEEP_MS);
-  }
+    const pdfPath = path.join(TMP_DIR, `${job_id}.pdf`);
 
-  await xanoUpdateJob(job_id, {
-    status: "done",
-    resultado: resultadoFinal,
-    updated_at: new Date()
-  });
+    /* -------- DOWNLOAD PDF -------- */
+
+    const pdfResp = await fetch(pdf_url);
+    if (!pdfResp.ok) throw new Error("Falha ao baixar PDF");
+
+    const buffer = Buffer.from(await pdfResp.arrayBuffer());
+    fs.writeFileSync(pdfPath, buffer);
+
+    /* -------- OCR DIGITAL -------- */
+
+    const rawText = await extractTextDirect(pdfPath);
+    const pages = splitTextIntoPages(rawText);
+    const chunks = chunkPages(pages, CHUNK_SIZE);
+
+    await xanoUpdateJob(job_id, {
+      total_pages: pages.length,
+      chunk_size: CHUNK_SIZE,
+      total_chunks: chunks.length,
+      chunk_atual: 0,
+      updated_at: new Date()
+    });
+
+    const resultadoFinal = { Cabecalho: {}, Servicos: [] };
+    const contexto = {
+      ultimoItem: null,
+      descricaoParcialAnterior: null
+    };
+
+    /* -------- LOOP CHUNKS -------- */
+
+    for (let i = 0; i < chunks.length; i++) {
+      await xanoUpdateJob(job_id, {
+        chunk_atual: i + 1,
+        updated_at: new Date()
+      });
+
+      const texto = chunks[i]
+        .map(p => `--- PAGINA ${p.page} ---\n${p.text}`)
+        .join("\n\n");
+
+      let raw;
+      let parcial;
+
+      try {
+        raw = await callGPT(prompt_base, contexto, texto);
+        parcial = JSON.parse(
+          raw.replace(/```json/gi, "").replace(/```/g, "").trim()
+        );
+      } catch (e) {
+        await xanoUpdateJob(job_id, {
+          status: "error",
+          error: `JSON inválido no chunk ${i + 1}: ${e.message}`,
+          updated_at: new Date()
+        });
+        return;
+      }
+
+      /* -------- MERGE -------- */
+
+      if (parcial.Cabecalho) {
+        Object.assign(resultadoFinal.Cabecalho, parcial.Cabecalho);
+      }
+
+      for (const s of parcial.Servicos || []) {
+        if (!resultadoFinal.Servicos.find(x => x.Item === s.Item)) {
+          resultadoFinal.Servicos.push(s);
+        }
+      }
+
+      if (parcial.Meta) {
+        contexto.ultimoItem = parcial.Meta.ultimoItemNesteLote;
+        contexto.descricaoParcialAnterior = parcial.Meta.descricaoFinalParcial;
+      }
+
+      await sleep(SLEEP_MS);
+    }
+
+    /* -------- FINALIZA -------- */
+
+    JSON.stringify(resultadoFinal); // valida JSON
+
+    await xanoUpdateJob(job_id, {
+      status: "done",
+      resultado: resultadoFinal,
+      updated_at: new Date()
+    });
+
+  } catch (e) {
+    await xanoUpdateJob(job_id, {
+      status: "error",
+      error: e.message,
+      updated_at: new Date()
+    });
+  }
 }
 
 /* ================= ROUTES ================= */
@@ -218,24 +250,14 @@ app.post("/ocr/parse", async (req, res) => {
     updated_at: new Date()
   });
 
-  // 🔥 NÃO aguarda
-  processJob(job_id, pdf_url, prompt_base)
-    .catch(async e => {
-      await xanoUpdateJob(job_id, {
-        status: "error",
-        error: e.message,
-        updated_at: new Date()
-      });
-    });
+  processJob(job_id, pdf_url, prompt_base);
 
-  // ⚡ resposta imediata
   res.json({
     success: true,
     job_id,
     status: "processing"
   });
 });
-
 
 app.get("/ocr/status/:job_id", async (req, res) => {
   const job = await xanoGetJob(req.params.job_id);
@@ -250,5 +272,5 @@ app.get("/health", (_, res) => res.json({ status: "ok" }));
 /* ================= START ================= */
 
 app.listen(3000, () => {
-  console.log("✅ OCR + GPT + Xano (job_id UUID) rodando");
+  console.log("✅ OCR + GPT + Xano (job async robusto) rodando");
 });
