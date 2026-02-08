@@ -116,12 +116,11 @@ function matchByTexto(texto, lista, campo) {
 
 /* ================= CLAUDE ================= */
 
-function extractJsonFromClaude(text) {
+function extractJsonFromClaude(text, jobId, chunkIndex) {
   if (!text || typeof text !== "string") {
-    throw new Error("Claude retornou resposta vazia ou inválida");
+    throw new Error("Claude retornou resposta vazia");
   }
 
-  // Remove blocos markdown
   let cleaned = text
     .replace(/```json/gi, "")
     .replace(/```/g, "")
@@ -130,7 +129,7 @@ function extractJsonFromClaude(text) {
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
 
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+  if (firstBrace === -1 || lastBrace === -1) {
     throw new Error("Claude não retornou JSON detectável");
   }
 
@@ -139,10 +138,20 @@ function extractJsonFromClaude(text) {
   try {
     return JSON.parse(jsonString);
   } catch (err) {
-    console.error("JSON bruto do Claude:\n", jsonString);
+    console.error("⛔ JSON inválido do Claude (chunk " + chunkIndex + "):");
+    console.error(jsonString);
+
+    // 🔥 salva no job para inspeção via GET
+    if (jobId && jobs[jobId]) {
+      jobs[jobId].error = "JSON inválido retornado pelo Claude";
+      jobs[jobId].rawClaude = jsonString;
+      jobs[jobId].rawClaudeOriginal = text;
+    }
+
     throw new Error("Falha ao fazer parse do JSON do Claude");
   }
 }
+
 
 
 async function callClaude(prompt, contexto, texto) {
