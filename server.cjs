@@ -182,7 +182,9 @@ async function processJob(job_id, pdf_url, prompt_base) {
           raw.replace(/```json/gi, "").replace(/```/g, "").trim()
         );
       } catch (e) {
-       await xanoUpdateJob(job_id, {
+
+
+        await xanoUpdateJob(job_id, {
         status: "error",
         error: `JSON inválido no chunk ${i + 1}: ${e.message}`,
         resultado: {
@@ -192,6 +194,8 @@ async function processJob(job_id, pdf_url, prompt_base) {
         updated_at: new Date()
       });
 
+
+        return;
       }
 
       /* -------- MERGE -------- */
