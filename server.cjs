@@ -6,7 +6,6 @@ const path = require("path");
 const { exec } = require("child_process");
 const AdmZip = require("adm-zip");
 const crypto = require("crypto");
-const fetch = require("node-fetch");
 
 const {
   ServicePrincipalCredentials,
@@ -19,6 +18,7 @@ const {
 } = require("@adobe/pdfservices-node-sdk");
 
 const { ocrWithTesseract } = require("./ocr-tesseract.cjs");
+
 
 const app = express();
 app.use(express.json());
