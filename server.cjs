@@ -197,6 +197,14 @@ async function processJob(jobId, payload) {
     const rawText = await extractTextDirect(pdfPath);
     const pages = splitTextIntoPages(rawText);
     const chunks = chunkPages(pages, CHUNK_SIZE);
+    const totalPages = pages.length;
+    const totalChunks = chunks.length;
+
+    // regra: ~1.2s por página
+    const estimatedSeconds = Math.min(
+      Math.ceil(totalPages * 1.2),
+      180
+    );
 
     const contexto = {
       ultimoItem: null,
@@ -282,8 +290,13 @@ async function processJob(jobId, payload) {
 
 /* ================= ROUTES ================= */
 
-app.post("/ocr/parse", (req, res) => {
+app.post("/ocr/parse", async (req, res) => {
   const jobId = crypto.randomUUID();
+  const { pdf_url } = req.body;
+
+  if (!pdf_url) {
+    return res.status(400).json({ error: "pdf_url é obrigatório" });
+  }
 
   jobs[jobId] = {
     status: "processing",
@@ -292,6 +305,7 @@ app.post("/ocr/parse", (req, res) => {
     error: null
   };
 
+  // dispara em background
   processJob(jobId, req.body);
 
   res.json({
