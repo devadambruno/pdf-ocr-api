@@ -5,8 +5,9 @@ const { parseDocument } = require("../parser/parseDocument");
 
 const client = new DocumentProcessorServiceClient({
   projectId: process.env.GCP_PROJECT_ID,
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
 });
+
 
 module.exports.processJob = async ({ job_id, pdf_url, depara }) => {
   const pdfResp = await fetch(pdf_url);
