@@ -1,7 +1,7 @@
 const { DocumentProcessorServiceClient } =
   require("@google-cloud/documentai").v1;
 
-const { parseDocumentAI } = require("../parser/parseDocumentAI");
+const { parseDocument } = require("../parser/parseDocument");
 
 const client = new DocumentProcessorServiceClient({
   projectId: process.env.GCP_PROJECT_ID,
