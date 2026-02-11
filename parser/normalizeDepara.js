@@ -1,17 +1,21 @@
-function splitSiglas(txt) {
-  if (!txt) return [];
+function normaliza(txt) {
   return txt
-    .toUpperCase()
-    .split(/[-–/]/)
-    .map(s => s.trim())
-    .filter(Boolean);
+    ?.toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-module.exports.normalizeDepara = (input, fieldName) => {
-  if (!Array.isArray(input)) return [];
+function normalizeDepara(lista, campoTexto) {
+  if (!Array.isArray(lista)) return [];
 
-  return input.map(item => ({
+  return lista.map(item => ({
     id: item.id,
-    siglas: splitSiglas(item[fieldName])
+    siglas: [
+      normaliza(item[campoTexto])
+    ]
   }));
-};
+}
+
+module.exports = { normalizeDepara };
