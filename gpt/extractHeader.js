@@ -85,7 +85,7 @@ ${textoCabecalho}
 
   try {
     const response = await openai.responses.create({
-      model: "gpt-4.1-mini",
+      model: "gpt-4.1",
       temperature: 0,
       input: prompt,
       text: {
