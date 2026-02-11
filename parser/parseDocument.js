@@ -1,3 +1,9 @@
+const { parseServices } = require("./parseServices");
+const { extractHeader } = require("../gpt/extractHeader");
+
+
+
+
 module.exports.parseDocument = async (doc, depara) => {
   const texto = doc.text || "";
 
