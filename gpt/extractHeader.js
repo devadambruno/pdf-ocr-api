@@ -1,51 +1,48 @@
 const OpenAI = require("openai");
 
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error("OPENAI_API_KEY não configurada");
+}
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-module.exports.extractHeader = async (texto, depara) => {
+module.exports.extractHeader = async function ({
+  textoOCR,
+  depara,
+}) {
   const prompt = `
-Você receberá o texto OCR de uma certidão técnica.
+Você receberá um TEXTO OCR correspondente a parte de uma certidão técnica (CAT ou CAO).
+Extraia apenas as informações de cabeçalho.
+Responda apenas com JSON válido.
 
-Sua tarefa é extrair e NORMALIZAR os seguintes campos:
+TIPOS_CERTIDAO:
+${JSON.stringify(depara.tipoCertidao)}
 
-- TipodaCertidao (retorne o ID correto conforme lista)
-- NiveldeAtividade (retorne o ID correto conforme lista)
-- QualificacaoObra (retorne o ID correto conforme lista)
-- QualificacaoEspecifica (retorne o ID correto conforme lista)
+NIVEL_ATIVIDADE:
+${JSON.stringify(depara.nivelAtividade)}
 
-Regras:
-- Use apenas IDs existentes nas listas fornecidas.
-- Se não tiver certeza absoluta, retorne null.
-- Responda apenas JSON válido.
+QUALIFICACAO_OBRA:
+${JSON.stringify(depara.qualificacaoObra)}
 
-Lista Tipos:
-${JSON.stringify(depara.json_tipos_certidao)}
+QUALIFICACAO_ESPECIFICA:
+${JSON.stringify(depara.qualificacaoEspecifica)}
 
-Lista Nível:
-${JSON.stringify(depara.json_nivel_atividade)}
-
-Lista Qualificação Obra:
-${JSON.stringify(depara.json_qualificacao_obra)}
-
-Lista Qualificação Específica:
-${JSON.stringify(depara.json_qualificacao_especifica)}
-
-Texto OCR:
-"""
-${texto.slice(0, 6000)}
-"""
+TEXTO:
+${textoOCR}
 `;
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     temperature: 0,
     messages: [
-      { role: "system", content: "Você é um especialista em certidões técnicas brasileiras." },
-      { role: "user", content: prompt }
+      { role: "system", content: "Você é um extrator estruturado de dados." },
+      { role: "user", content: prompt },
     ],
   });
 
-  return JSON.parse(response.choices[0].message.content);
+  const content = response.choices[0].message.content;
+
+  return JSON.parse(content);
 };
