@@ -1,14 +1,10 @@
 const { DocumentProcessorServiceClient } =
   require("@google-cloud/documentai").v1;
 
-const { normalizeDepara } = require("../parser/normalizeDepara");
 const { parseDocument } = require("../parser/parseDocument");
+const { normalizeDepara } = require("../parser/normalizeDepara");
 
 /* ================= CLIENT ================= */
-
-if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-  throw new Error("Credencial Google não configurada");
-}
 
 const client = new DocumentProcessorServiceClient({
   projectId: process.env.GCP_PROJECT_ID,
@@ -19,7 +15,7 @@ const client = new DocumentProcessorServiceClient({
 
 /* ================= WORKER ================= */
 
-module.exports.processJob = async ({ job_id, pdf_url, depara }) => {
+module.exports.processJob = async ({ pdf_url, depara }) => {
   if (!depara) {
     throw new Error("De/para não informado");
   }
@@ -70,9 +66,5 @@ module.exports.processJob = async ({ job_id, pdf_url, depara }) => {
 
   /* -------- PARSER FINAL -------- */
 
-  return await parseDocument(result.document, {
-  ...deparaNormalizado,
-  original: depara
-});
-
+  return await parseDocument(result.document, deparaNormalizado);
 };
