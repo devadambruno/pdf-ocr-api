@@ -1,15 +1,16 @@
 const { DocumentProcessorServiceClient } =
   require("@google-cloud/documentai").v1;
 
-const { parseServices } = require("../parser/parseServices");
-const { callGPTCabecalho } = require("../gpt/cabecalho");
+const { parseDocument } = require("../parser/parseDocument");
 
 const client = new DocumentProcessorServiceClient({
   projectId: process.env.GCP_PROJECT_ID,
-  keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  credentials: JSON.parse(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+  ),
 });
 
-module.exports.processJob = async ({ pdf_url, depara }) => {
+module.exports.processJob = async ({ job_id, pdf_url, depara }) => {
   const pdfResp = await fetch(pdf_url);
   if (!pdfResp.ok) throw new Error("Falha ao baixar PDF");
 
@@ -21,20 +22,9 @@ module.exports.processJob = async ({ pdf_url, depara }) => {
     name,
     rawDocument: {
       content: buffer,
-      mimeType: "application/pdf"
-    }
+      mimeType: "application/pdf",
+    },
   });
 
-  const document = result.document;
-
-  // 🔥 1. GPT — CABEÇALHO
-  const cabecalho = await callGPTCabecalho(document.text);
-
-  // 🔧 2. Parser determinístico — SERVIÇOS
-  const servicos = parseServices(document, depara);
-
-  return {
-    ...cabecalho,
-    Servicos: servicos
-  };
+  return parseDocument(result.document, depara);
 };
