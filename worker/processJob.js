@@ -58,7 +58,7 @@ module.exports.processJob = async ({ pdf_url, depara }) => {
 
   const name = `projects/${process.env.GCP_PROJECT_ID}/locations/${process.env.GCP_LOCATION}/processors/${process.env.DOCUMENT_AI_PROCESSOR_ID}`;
 
-const pdfChunks = await splitPdfBuffer(buffer, 30);
+const pdfChunks = await splitPdfBuffer(buffer, 15);
 
 let documentos = [];
 
