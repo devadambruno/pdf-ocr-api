@@ -70,5 +70,9 @@ module.exports.processJob = async ({ job_id, pdf_url, depara }) => {
 
   /* -------- PARSER FINAL -------- */
 
-  return parseDocument(result.document, deparaNormalizado);
+  return await parseDocument(result.document, {
+  ...deparaNormalizado,
+  original: depara
+});
+
 };

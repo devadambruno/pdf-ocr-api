@@ -1,8 +1,10 @@
 const { parseServices } = require("./parseServices");
-const { mapByTexto } = require("./normalizeDepara");
+const { extractHeader } = require("../gpt/extractHeader");
 
-module.exports.parseDocument = (doc, depara) => {
+module.exports.parseDocument = async (doc, depara) => {
   const texto = doc.text || "";
+
+  const headerGPT = await extractHeader(texto, depara.original);
 
   return {
     NumerodaCertidao:
@@ -11,17 +13,10 @@ module.exports.parseDocument = (doc, depara) => {
     ObjetodaCertidao:
       texto.match(/RECUPERAÇÃO.+/i)?.[0] ?? null,
 
-    TipodaCertidao:
-      mapByTexto(texto, depara.tipoCertidao),
-
-    QualificacaoObra:
-      mapByTexto(texto, depara.qualificacaoObra),
-
-    QualificacaoEspecifica:
-      mapByTexto(texto, depara.qualificacaoEspecifica),
-
-    NiveldeAtividade:
-      mapByTexto(texto, depara.nivelAtividade),
+    TipodaCertidao: headerGPT.TipodaCertidao ?? null,
+    NiveldeAtividade: headerGPT.NiveldeAtividade ?? null,
+    QualificacaoObra: headerGPT.QualificacaoObra ?? null,
+    QualificacaoEspecifica: headerGPT.QualificacaoEspecifica ?? null,
 
     Estado:
       texto.match(/\b(BA|SP|RJ|MG|PR|RS|SC)\b/)?.[1] ?? null,
