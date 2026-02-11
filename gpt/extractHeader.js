@@ -9,13 +9,13 @@ const openai = new OpenAI({
 });
 
 module.exports.extractHeader = async function ({ textoOCR, depara }) {
-
   const response = await openai.responses.create({
     model: "gpt-4.1-mini",
     temperature: 0,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
+
+    text: {
+      format: {
+        type: "json_schema",
         name: "header_schema",
         schema: {
           type: "object",
@@ -35,6 +35,7 @@ module.exports.extractHeader = async function ({ textoOCR, depara }) {
         }
       }
     },
+
     input: [
       {
         role: "system",
