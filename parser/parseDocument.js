@@ -21,10 +21,11 @@ module.exports.parseDocument = async (docs, depara) => {
   };
 
   try {
-    header = await extractHeader({
-      textoOCR: textoCompleto,
-      depara,
-    });
+
+    header = await extractHeader(textoCompleto, depara);
+
+
+
   } catch (e) {
     console.error("Erro no GPT header:", e.message);
   }
