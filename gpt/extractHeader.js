@@ -44,5 +44,16 @@ ${textoOCR}
 
   const content = response.choices[0].message.content;
 
-  return JSON.parse(content);
+  /* 👇 COLOQUE AQUI */
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(content);
+  } catch (e) {
+    console.error("Erro ao parsear resposta do GPT:", content);
+    throw new Error("Resposta inválida do GPT");
+  }
+
+  return parsed;
 };

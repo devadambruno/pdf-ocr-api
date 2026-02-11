@@ -1,10 +1,13 @@
 const { parseServices } = require("./parseServices");
 const { extractHeader } = require("../gpt/extractHeader");
 
-module.exports.parseDocument = async (doc, depara) => {
+module.exports.parseDocument = async (doc, deparaNormalizado) => {
   const texto = doc.text || "";
 
-  const headerGPT = await extractHeader(texto, depara.original);
+  const headerGPT = await extractHeader({
+    textoOCR: texto,
+    depara: deparaNormalizado
+  });
 
   return {
     NumerodaCertidao:
@@ -21,6 +24,6 @@ module.exports.parseDocument = async (doc, depara) => {
     Estado:
       texto.match(/\b(BA|SP|RJ|MG|PR|RS|SC)\b/)?.[1] ?? null,
 
-    Servicos: parseServices(doc, depara)
+    Servicos: parseServices(doc, deparaNormalizado)
   };
 };
