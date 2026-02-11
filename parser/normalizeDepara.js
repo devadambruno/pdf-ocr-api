@@ -7,15 +7,24 @@ function normaliza(txt) {
     .trim();
 }
 
-function normalizeDepara(lista, campoTexto) {
-  if (!Array.isArray(lista)) return [];
-
-  return lista.map(item => ({
+function normalizeDepara(lista, campo) {
+  return (lista || []).map(item => ({
     id: item.id,
-    siglas: [
-      normaliza(item[campoTexto])
-    ]
+    valor: normaliza(item[campo])
   }));
 }
 
-module.exports = { normalizeDepara };
+function mapByTexto(texto, lista) {
+  const t = normaliza(texto);
+  for (const item of lista || []) {
+    if (t.includes(item.valor)) {
+      return item.valor;
+    }
+  }
+  return null;
+}
+
+module.exports = {
+  normalizeDepara,
+  mapByTexto
+};

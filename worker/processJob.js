@@ -6,6 +6,10 @@ const { parseDocument } = require("../parser/parseDocument");
 
 /* ================= CLIENT ================= */
 
+if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  throw new Error("Credencial Google não configurada");
+}
+
 const client = new DocumentProcessorServiceClient({
   projectId: process.env.GCP_PROJECT_ID,
   credentials: JSON.parse(

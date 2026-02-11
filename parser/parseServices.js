@@ -1,29 +1,35 @@
-const { mapBySigla } = require("./mapBySigla");
-
-function parseServices(doc, depara) {
-  const servicos = [];
+module.exports.parseServices = (doc, depara) => {
+  const resultado = [];
 
   for (const page of doc.pages || []) {
     for (const table of page.tables || []) {
       for (const row of table.bodyRows || []) {
-        const cells = row.cells.map(c => c.text?.trim() || null);
+        const cells = row.cells.map(c => {
+          const seg = c.layout.textAnchor.textSegments?.[0];
+          if (!seg) return null;
+          return doc.text
+            .substring(seg.startIndex, seg.endIndex)
+            .trim();
+        });
 
-        // ❌ FILTRA LIXO (UF, CEP, datas, etc)
-        if (!cells[0] || !cells[1]) continue;
-        if (/^UF|CEP|DATA|IN[IÍ]CIO|T[EÉ]RMINO/i.test(cells[0])) continue;
+        const item = cells[0];
+        const descricao = cells[1];
+        const unidade = cells[2];
+        const quantidade = cells[3];
 
-        servicos.push({
-          Item: cells[0],
-          Descricao: cells[1],
-          Quantidade: cells[3] || null,
-          Categoria: null, // pode deduzir depois
-          Unidade: cells[2] || null
+        // 🔥 FILTRO ANTI-LIXO
+        if (!item || !/^\d+(\.\d+)*$/.test(item)) continue;
+
+        resultado.push({
+          Item: item,
+          Descricao: descricao || null,
+          Quantidade: quantidade || null,
+          Categoria: null,
+          Unidade: unidade || null
         });
       }
     }
   }
 
-  return servicos;
-}
-
-module.exports = { parseServices };
+  return resultado;
+};
