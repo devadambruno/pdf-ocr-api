@@ -24,28 +24,29 @@ module.exports.processJob = async ({ pdf_url, depara }) => {
 
   /* -------- NORMALIZA DE/PARA -------- */
 
-  const deparaNormalizado = {
-    tipoCertidao: normalizeDepara(
-      depara.json_tipos_certidao,
-      "tipoCertidao"
-    ),
-    nivelAtividade: normalizeDepara(
-      depara.json_nivel_atividade,
-      "nivelAtividade"
-    ),
-    qualificacaoObra: normalizeDepara(
-      depara.json_qualificacao_obra,
-      "qualificacao"
-    ),
-    qualificacaoEspecifica: normalizeDepara(
-      depara.json_qualificacao_especifica,
-      "qualificacaoEspecifica"
-    ),
-    unidades: normalizeDepara(
-      depara.json_unidades,
-      "unidadeNome"
-    ),
-  };
+const deparaNormalizado = {
+  tipoCertidao: normalizeDepara(
+    depara.tipoCertidao,
+    "tipoCertidao"
+  ),
+  nivelAtividade: normalizeDepara(
+    depara.nivelAtividade,
+    "nivelAtividade"
+  ),
+  qualificacaoObra: normalizeDepara(
+    depara.qualificacaoObra,
+    "qualificacao"
+  ),
+  qualificacaoEspecifica: normalizeDepara(
+    depara.qualificacaoEspecifica,
+    "qualificacaoEspecifica"
+  ),
+  unidades: normalizeDepara(
+    depara.unidades,
+    "unidadeNome"
+  ),
+};
+
 
   /* -------- DOWNLOAD PDF -------- */
 
