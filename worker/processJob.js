@@ -58,11 +58,11 @@ module.exports.processJob = async ({ pdf_url, depara }) => {
 
   const name = `projects/${process.env.GCP_PROJECT_ID}/locations/${process.env.GCP_LOCATION}/processors/${process.env.DOCUMENT_AI_PROCESSOR_ID}`;
 
+/* -------- PROCESSA TODOS CHUNKS -------- */
+
 const pdfChunks = await splitPdfBuffer(buffer, 15);
 
 let documentos = [];
-
-
 
 for (const chunk of pdfChunks) {
   const [result] = await client.processDocument({
@@ -79,14 +79,9 @@ for (const chunk of pdfChunks) {
   documentos.push(result.document);
 }
 
+/* -------- ENVIA TODOS DOCUMENTOS PARA O PARSER -------- */
 
-/* -------- MERGE TEXTOS -------- */
+return await parseDocument(documentos, deparaNormalizado);
 
-const textoCompleto = documentos.map(d => d.text).join("\n");
-
-return await parseDocument(
-  { text: textoCompleto },
-  deparaNormalizado
-);
 
 };
