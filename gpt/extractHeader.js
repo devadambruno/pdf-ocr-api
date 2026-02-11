@@ -8,44 +8,57 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-module.exports.extractHeader = async function (textoOCR, depara) {
+module.exports.extractHeader = async function ({
+  textoOCR,
+  depara,
+}) {
   const prompt = `
 Você receberá um TEXTO OCR de uma certidão técnica (CAT ou CAO).
 
-Sua tarefa é extrair e NORMALIZAR apenas:
+Extraia APENAS os campos abaixo.
 
-- TipodaCertidao
-- NiveldeAtividade
-- QualificacaoObra
-- QualificacaoEspecifica
+REGRAS OBRIGATÓRIAS:
+1. Responda APENAS com JSON válido.
+2. NÃO use markdown.
+3. NÃO escreva comentários.
+4. NÃO invente informações.
+5. Se não tiver segurança, retorne null.
+6. Normalize EXCLUSIVAMENTE usando as listas fornecidas.
+7. Retorne o ID correspondente.
 
-Regras:
-1) Responda APENAS JSON válido
-2) Não use markdown
-3) Não invente valores
-4) Se não tiver certeza use null
-5) Retorne apenas os IDs das opções
-
-TIPOS_CERTIDAO:
+===================================
+LISTA TIPOS_CERTIDAO
 ${JSON.stringify(depara.tipoCertidao)}
 
-NIVEL_ATIVIDADE:
+LISTA NIVEL_ATIVIDADE
 ${JSON.stringify(depara.nivelAtividade)}
 
-QUALIFICACAO_OBRA:
+LISTA QUALIFICACAO_OBRA
 ${JSON.stringify(depara.qualificacaoObra)}
 
-QUALIFICACAO_ESPECIFICA:
+LISTA QUALIFICACAO_ESPECIFICA
 ${JSON.stringify(depara.qualificacaoEspecifica)}
 
-TEXTO:
+===================================
+
+Extraia:
+
+- TipodaCertidao (retorne apenas o ID)
+- NiveldeAtividade (retorne apenas o ID)
+- QualificacaoObra (retorne apenas o ID)
+- QualificacaoEspecifica (retorne apenas o ID)
+- ObjetodaCertidao (texto literal do objeto da obra)
+
+===================================
+
+TEXTO OCR:
 ${textoOCR}
 `;
 
   const response = await openai.responses.create({
     model: "gpt-4.1-mini",
-    input: prompt,
     temperature: 0,
+    input: prompt,
   });
 
   const content = response.output_text;
@@ -55,14 +68,9 @@ ${textoOCR}
   try {
     parsed = JSON.parse(content);
   } catch (e) {
-    console.error("Resposta inválida do GPT:", content);
+    console.error("Erro ao parsear resposta do GPT:", content);
     throw new Error("Resposta inválida do GPT");
   }
 
-  return {
-    TipodaCertidao: parsed.TipodaCertidao ?? null,
-    NiveldeAtividade: parsed.NiveldeAtividade ?? null,
-    QualificacaoObra: parsed.QualificacaoObra ?? null,
-    QualificacaoEspecifica: parsed.QualificacaoEspecifica ?? null,
-  };
+  return parsed;
 };

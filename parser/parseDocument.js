@@ -34,8 +34,8 @@ module.exports.parseDocument = async (docs, depara) => {
   const numero =
     textoCompleto.match(/\b\d{5,}\/\d{4}\b/)?.[0] ?? null;
 
-  const objeto =
-    textoCompleto.match(/RECUPERAÇÃO.+/i)?.[0] ?? null;
+  const objeto = header?.ObjetodaCertidao ?? null;
+
 
   const estado =
     textoCompleto.match(
