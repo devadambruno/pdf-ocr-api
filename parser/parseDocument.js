@@ -1,5 +1,7 @@
 const { parseServices } = require("./parseServices");
 const { extractHeader } = require("../gpt/extractHeader");
+const { detectTipoCertidao } = require("./detectTipoCertidao");
+
 
 module.exports.parseDocument = async (docs, depara) => {
   const documentos = Array.isArray(docs) ? docs : [docs];
@@ -48,10 +50,15 @@ module.exports.parseDocument = async (docs, depara) => {
 
   /* ================= RETORNO FINAL ================= */
 
+  const tipoCertidaoId = detectTipoCertidao(
+  textoCompleto,
+  depara.tipoCertidao
+  );
+
   return {
     NumerodaCertidao: numero,
     ObjetodaCertidaCertidao: header?.ObjetodaCertidao ?? null,
-    TipodaCertidao: header?.TipodaCertidao ?? null,
+    TipodaCertidao: tipoCertidaoId,
     QualificacaoObra: header?.QualificacaoObra ?? null,
     QualificacaoEspecifica: header?.QualificacaoEspecifica ?? null,
     NiveldeAtividade: header?.NiveldeAtividade ?? null,
