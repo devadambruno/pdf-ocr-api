@@ -1,18 +1,30 @@
+function normalize(texto = "") {
+  return texto
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, ""); // remove acentos
+}
+
 module.exports.detectTipoCertidao = function (texto, listaTipos = []) {
   if (!texto || !Array.isArray(listaTipos)) return null;
 
-  const upper = texto.toUpperCase();
+  const upper = normalize(texto);
 
-  // Detecta tipo base
-  const isCAT = /CERTID[ÃA]O\s+DE\s+ACERVO\s+T[ÉE]CNICO/.test(upper);
-  const isCAO = /CERTID[ÃA]O\s+DE\s+ACERVO\s+OPERACIONAL/.test(upper);
+  // 🔥 Detecta CAT ou CAO de forma flexível
+  const isCAT =
+    upper.includes("ACERVO TECNICO") ||
+    upper.includes("CAT");
 
-  // Detecta conselho
-  const isCREA = /\bCREA\b/.test(upper);
-  const isCAU = /\bCAU\b/.test(upper);
-  const isCRT = /\bCRT\b/.test(upper);
-  const isCRA = /\bCRA\b/.test(upper);
-  const isCFTA = /\bCFTA\b/.test(upper);
+  const isCAO =
+    upper.includes("ACERVO OPERACIONAL") ||
+    upper.includes("CAO");
+
+  // 🔥 Detecta conselho
+  const isCREA = upper.includes("CREA");
+  const isCAU = upper.includes("CAU");
+  const isCRT = upper.includes("CRT");
+  const isCRA = upper.includes("CRA");
+  const isCFTA = upper.includes("CFTA");
 
   let nomeNormalizado = null;
 
@@ -26,11 +38,19 @@ module.exports.detectTipoCertidao = function (texto, listaTipos = []) {
   else if (isCAO && isCRA) nomeNormalizado = "CAO - CRA";
   else if (isCAO && isCFTA) nomeNormalizado = "CAO – CFTA";
 
-  if (!nomeNormalizado) return null;
+  if (!nomeNormalizado) {
+    console.log("⚠️ Tipo não detectado no texto");
+    return null;
+  }
 
   const encontrado = listaTipos.find((item) =>
-    item.tipoCertidao?.toUpperCase() === nomeNormalizado.toUpperCase()
+    normalize(item.tipoCertidao) === normalize(nomeNormalizado)
   );
 
-  return encontrado ? encontrado.id : null;
+  if (!encontrado) {
+    console.log("⚠️ Tipo detectado mas não encontrado na lista:", nomeNormalizado);
+    return null;
+  }
+
+  return encontrado.id;
 };

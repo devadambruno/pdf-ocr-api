@@ -82,6 +82,8 @@ for (const chunk of pdfChunks) {
 
 /* -------- ENVIA TODOS DOCUMENTOS PARA O PARSER -------- */
 
+console.log("Lista tipos:", depara.tipoCertidao);
+
 return await parseDocument(documentos, deparaNormalizado);
 
 
