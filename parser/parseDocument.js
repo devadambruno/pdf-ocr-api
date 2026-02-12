@@ -50,10 +50,17 @@ module.exports.parseDocument = async (docs, depara) => {
 
   /* ================= RETORNO FINAL ================= */
 
- const tipoCertidaoId = detectTipoCertidao(
+ /* ================= DEBUG ================= */
+
+console.log("=== DEBUG TIPO CERTIDÃO ===");
+console.log("Lista recebida:", depara.tipoCertidao);
+console.log("Texto início:", textoCompleto.slice(0, 1500));
+
+const tipoCertidaoId = detectTipoCertidao(
   textoCompleto,
-  depara.tipoCertidaoOriginal
+  depara.tipoCertidao
 );
+
 
 
   return {
