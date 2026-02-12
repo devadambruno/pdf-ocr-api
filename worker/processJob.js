@@ -6,6 +6,7 @@ const { normalizeDepara } = require("../parser/normalizeDepara");
 const { splitPdfBuffer } = require("../utils/splitPdf");
 
 
+
 /* ================= CLIENT ================= */
 
 const client = new DocumentProcessorServiceClient({
@@ -47,6 +48,10 @@ const deparaNormalizado = {
   ),
 };
 
+
+
+console.log("DEBUG depara recebido:", Object.keys(depara));
+console.log("DEBUG unidades recebidas:", depara.unidades?.length);
 
   /* -------- DOWNLOAD PDF -------- */
 
