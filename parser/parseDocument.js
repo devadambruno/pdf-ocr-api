@@ -58,8 +58,9 @@ console.log("Texto início:", textoCompleto.slice(0, 1500));
 
 const tipoCertidaoId = detectTipoCertidao(
   textoCompleto,
-  depara.tipoCertidao
+  depara.listaTiposOriginal
 );
+
 
 
 

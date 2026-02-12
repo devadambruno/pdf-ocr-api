@@ -86,8 +86,9 @@ console.log("Lista tipos:", depara.tipoCertidao);
 
 return await parseDocument(documentos, {
   ...deparaNormalizado,
-  tipoCertidaoOriginal: depara.tipoCertidao
+  listaTiposOriginal: depara.tipoCertidao
 });
+
 
 
 
