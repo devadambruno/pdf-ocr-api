@@ -2,35 +2,22 @@ function normalize(texto = "") {
   return texto
     .toUpperCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove acentos
-    .replace(/\s+/g, "") // remove espaços
-    .replace(/[^A-Z0-9\/]/g, ""); // remove caracteres estranhos
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
-module.exports.normalizeUnidade = function (valorOCR, listaUnidades = []) {
-  if (!valorOCR) return null;
+module.exports.normalizeUnidade = function (unidadeExtraida, listaUnidades = []) {
+  if (!unidadeExtraida) return null;
+  if (!Array.isArray(listaUnidades)) return null;
 
-  const normalOCR = normalize(valorOCR);
+  const unidadeNormalizada = normalize(unidadeExtraida.trim());
 
-  for (const unidade of listaUnidades) {
-    const nomeLista = unidade.unidadeNome.split(" - ")[0];
-    const normalLista = normalize(nomeLista);
+  for (const item of listaUnidades) {
+    if (!item?.unidadeNome) continue; // 🔥 blindagem
 
-    if (normalOCR === normalLista) {
-      return unidade.id;
-    }
-  }
+    const sigla = item.unidadeNome.split(" - ")[0];
 
-  // 🔥 tentativa inteligente para casos como M3XKM
-  for (const unidade of listaUnidades) {
-    const nomeLista = unidade.unidadeNome.split(" - ")[0];
-    const normalLista = normalize(nomeLista);
-
-    if (
-      normalOCR.includes(normalLista) ||
-      normalLista.includes(normalOCR)
-    ) {
-      return unidade.id;
+    if (normalize(sigla) === unidadeNormalizada) {
+      return item.id;
     }
   }
 
