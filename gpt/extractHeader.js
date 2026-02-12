@@ -37,9 +37,30 @@ REGRAS OBRIGATÓRIAS:
 5. Se não encontrar com segurança, retorne null.
 6. Use EXCLUSIVAMENTE as listas fornecidas.
 7. Retorne apenas o ID correspondente.
-8. Para Tipo de Certidão:
-   - Se encontrar "Certidão de Acervo Técnico - CAT" → usar lista CAT – CREA
-   - Se encontrar "CAO" → usar lista correspondente
+
+8.REGRAS ESPECÍFICAS PARA TIPO DE CERTIDÃO:
+
+1. Identifique se o documento é CAT ou CAO.
+   - "Certidão de Acervo Técnico" = CAT
+   - "Certidão de Acervo Operacional" = CAO
+
+2. Identifique o Conselho:
+   - Se aparecer "CREA" ou "CREA-BA" ou "CREA-SP" → Conselho = CREA
+   - Se aparecer "CAU" → Conselho = CAU
+   - Se aparecer "CRT" → Conselho = CRT
+   - Se aparecer "CRA" → Conselho = CRA
+   - Se aparecer "CFTA" → Conselho = CFTA
+
+3. Combine os dois para escolher EXATAMENTE uma opção da lista.
+
+Exemplos:
+- CAT + CREA → selecionar o item cujo texto seja "CAT – CREA"
+- CAO + CREA → selecionar "CAO – CREA"
+- CAT + CAU → selecionar "CAT – CAU"
+- CAO + CAU → selecionar "CAO – CAU"
+
+4. Retorne o ID correspondente.
+
 9. Para Qualificação:
    - Hospital → OBRAS HOSPITALARES
    - Escola → OBRAS EDUCACIONAIS
