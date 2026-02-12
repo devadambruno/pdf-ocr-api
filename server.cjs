@@ -34,7 +34,7 @@ async function xanoGetJob(job_id) {
 app.post("/ocr/parse", async (req, res) => {
   const {
     pdf_url,
-    json_tipo_certidao,
+    json_tipos_certidao,
     json_nivel_atividade,
     json_qualificacao_obra,
     json_qualificacao_especifica,
@@ -62,7 +62,7 @@ app.post("/ocr/parse", async (req, res) => {
         job_id,
         pdf_url,
         depara: {
-          tipoCertidao: json_tipo_certidao,
+          tipoCertidao: json_tipos_certidao,
           nivelAtividade: json_nivel_atividade,
           qualificacaoObra: json_qualificacao_obra,
           qualificacaoEspecifica: json_qualificacao_especifica,
