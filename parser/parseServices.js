@@ -1,3 +1,5 @@
+const { normalizeUnidade } = require("./normalizeUnidade");
+
 module.exports.parseServices = (doc, depara) => {
   const resultado = [];
 
@@ -25,7 +27,7 @@ module.exports.parseServices = (doc, depara) => {
           Descricao: descricao || null,
           Quantidade: quantidade || null,
           Categoria: null,
-          Unidade: unidade || null
+          Unidade: normalizeUnidade(unidadeExtraida, depara.unidades),
         });
       }
     }
