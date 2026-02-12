@@ -27,7 +27,8 @@ module.exports.parseServices = (doc, depara) => {
           Descricao: descricao || null,
           Quantidade: quantidade || null,
           Categoria: null,
-          Unidade: unidade || null
+          Unidade: normalizeUnidade(unidade, depara.unidades),
+
         });
       }
     }

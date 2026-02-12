@@ -3,7 +3,7 @@ function normalize(texto = "") {
     .toUpperCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Z0-9]/g, ""); // remove tudo que não for letra/número
+    .replace(/[^A-Z0-9]/g, ""); // 🔥 remove tudo que não for letra ou número
 }
 
 module.exports.normalizeUnidade = function (unidadeExtraida, listaUnidades = []) {
@@ -15,9 +15,10 @@ module.exports.normalizeUnidade = function (unidadeExtraida, listaUnidades = [])
   for (const item of listaUnidades) {
     if (!item?.unidadeNome) continue;
 
-    const siglaOriginal = item.unidadeNome.split(" - ")[0];
+    // pega só a sigla antes do hífen
+    const sigla = item.unidadeNome.split(" - ")[0];
 
-    const siglaNormalizada = normalize(siglaOriginal);
+    const siglaNormalizada = normalize(sigla);
 
     if (siglaNormalizada === unidadeNormalizada) {
       return item.id;
