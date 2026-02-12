@@ -84,7 +84,11 @@ for (const chunk of pdfChunks) {
 
 console.log("Lista tipos:", depara.tipoCertidao);
 
-return await parseDocument(documentos, deparaNormalizado);
+return await parseDocument(documentos, {
+  ...deparaNormalizado,
+  tipoCertidaoOriginal: depara.tipoCertidao
+});
+
 
 
 };
