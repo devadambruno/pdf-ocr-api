@@ -1,35 +1,46 @@
-function normalize(texto = "") {
+function cleanOCR(texto = "") {
   return texto
     .toUpperCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Z0-9]/g, "");
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9/]/g, "");
 }
 
-module.exports.normalizeUnidade = function (unidadeExtraida, listaUnidades = []) {
+module.exports.normalizeUnidade = function (
+  unidadeExtraida,
+  listaUnidades = []
+) {
   if (!unidadeExtraida) return null;
   if (!Array.isArray(listaUnidades)) return null;
 
-  const unidadeNormalizada = normalize(unidadeExtraida);
+  const unidadeLimpa = cleanOCR(unidadeExtraida);
 
-  console.log("---- DEBUG UNIDADE ----");
-  console.log("Extraída:", unidadeExtraida);
-  console.log("Normalizada extraída:", unidadeNormalizada);
+  
 
   for (const item of listaUnidades) {
-    if (!item?.unidadeNome) continue;
+    const raw =
+      item.unidadeNome ||
+      item.valor ||
+      item.nome ||
+      "";
 
-    const sigla = item.unidadeNome.split(" - ")[0];
-    const siglaNormalizada = normalize(sigla);
+    if (!raw) continue;
 
-    console.log("Comparando com:", sigla, "=>", siglaNormalizada);
+    const siglaOriginal = raw.split(" - ")[0];
+    const siglaLimpa = cleanOCR(siglaOriginal);
 
-    if (siglaNormalizada === unidadeNormalizada) {
-      console.log("✅ MATCH:", item.id);
+    if (siglaLimpa === unidadeLimpa) {
+      return item.id;
+    }
+
+    if (unidadeLimpa.startsWith(siglaLimpa)) {
       return item.id;
     }
   }
 
-  console.log("❌ NÃO ENCONTROU MATCH");
+
+  console.log("Primeira unidade exemplo:", listaUnidades[0]);
+
   return null;
 };
