@@ -34,7 +34,7 @@ async function xanoGetJob(job_id) {
 app.post("/ocr/parse", async (req, res) => {
   const {
     pdf_url,
-    protocolo_id, // 🔥 NOVO CAMPO
+    protocolos_id, // 🔥 NOVO CAMPO
     json_tipos_certidao,
     json_nivel_atividade,
     json_qualificacao_obra,
@@ -46,7 +46,7 @@ app.post("/ocr/parse", async (req, res) => {
     return res.status(400).json({ error: "pdf_url obrigatório" });
   }
 
-  if (!protocolo_id) {
+  if (!protocolos_id) {
     return res.status(400).json({ error: "protocolo_id obrigatório" });
   }
 
@@ -55,7 +55,7 @@ app.post("/ocr/parse", async (req, res) => {
   // 🔥 AGORA SALVA O protocolo_id
   await xanoCreateJob({
     job_id,
-    protocolo_id, // 👈 salva vínculo
+    protocolos_id, // 👈 salva vínculo
     status: "processing",
     pdf_url,
     created_at: new Date(),
@@ -92,7 +92,7 @@ app.post("/ocr/parse", async (req, res) => {
     }
   })();
 
-  res.json({ success: true, job_id, protocolo_id });
+  res.json({ success: true, job_id, protocolos_id });
 });
 
 
