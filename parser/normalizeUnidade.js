@@ -7,6 +7,8 @@ function cleanOCR(texto = "") {
     .replace(/[^A-Z0-9/]/g, "");
 }
 
+const DEBUG_UNIDADE = true;
+
 module.exports.normalizeUnidade = function (
   unidadeExtraida,
   listaUnidades = []
@@ -15,6 +17,12 @@ module.exports.normalizeUnidade = function (
   if (!Array.isArray(listaUnidades)) return null;
 
   const unidadeLimpa = cleanOCR(unidadeExtraida);
+
+  if (DEBUG_UNIDADE) {
+    console.log("\n---- DEBUG UNIDADE ----");
+    console.log("Extraída:", unidadeExtraida);
+    console.log("Normalizada:", unidadeLimpa);
+  }
 
   for (const item of listaUnidades) {
     const raw =
@@ -28,18 +36,31 @@ module.exports.normalizeUnidade = function (
     const siglaOriginal = raw.split(" - ")[0].trim();
     const siglaLimpa = cleanOCR(siglaOriginal);
 
-    // 🔥 IGNORA SIGLA VAZIA
     if (!siglaLimpa) continue;
 
-    // Match exato
+    if (DEBUG_UNIDADE) {
+      console.log("Comparando com:", siglaOriginal, "|", siglaLimpa);
+    }
+
+    // 🔥 Match exato
     if (siglaLimpa === unidadeLimpa) {
+      if (DEBUG_UNIDADE) {
+        console.log("✅ MATCH EXATO → ID:", item.id);
+      }
       return item.id;
     }
 
-    // Match por início (para casos tipo M3XKM)
+    // 🔥 Match parcial (ex: M3XKM começa com M3)
     if (unidadeLimpa.startsWith(siglaLimpa)) {
+      if (DEBUG_UNIDADE) {
+        console.log("🟡 MATCH PARCIAL → ID:", item.id);
+      }
       return item.id;
     }
+  }
+
+  if (DEBUG_UNIDADE) {
+    console.log("❌ NÃO ENCONTROU MATCH");
   }
 
   return null;
