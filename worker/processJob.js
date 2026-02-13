@@ -42,7 +42,7 @@ const deparaNormalizado = {
     depara.qualificacaoEspecifica,
     "qualificacaoEspecifica"
   ),
-  +
+  
   unidades: normalizeDepara(
     depara.unidades,
     "unidadeNome"
