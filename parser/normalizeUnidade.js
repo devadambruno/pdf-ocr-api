@@ -16,8 +16,6 @@ module.exports.normalizeUnidade = function (
 
   const unidadeLimpa = cleanOCR(unidadeExtraida);
 
-  
-
   for (const item of listaUnidades) {
     const raw =
       item.unidadeNome ||
@@ -27,20 +25,22 @@ module.exports.normalizeUnidade = function (
 
     if (!raw) continue;
 
-    const siglaOriginal = raw.split(" - ")[0];
+    const siglaOriginal = raw.split(" - ")[0].trim();
     const siglaLimpa = cleanOCR(siglaOriginal);
 
+    // 🔥 IGNORA SIGLA VAZIA
+    if (!siglaLimpa) continue;
+
+    // Match exato
     if (siglaLimpa === unidadeLimpa) {
       return item.id;
     }
 
+    // Match por início (para casos tipo M3XKM)
     if (unidadeLimpa.startsWith(siglaLimpa)) {
       return item.id;
     }
   }
-
-
-  console.log("Primeira unidade exemplo:", listaUnidades[0]);
 
   return null;
 };
