@@ -18,7 +18,8 @@ function cleanOCR(texto = "") {
     .replace(/\s+/g, "")
     .replace(/[×]/g, "X")
     .replace(/[\/\-]/g, "X")
-    .replace(/[^A-Z0-9X]/g, "");
+    // Mantém '%' para suportar unidade de porcentagem
+    .replace(/[^A-Z0-9X%]/g, "");
 }
 
 module.exports.normalizeUnidade = function (

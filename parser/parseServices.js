@@ -70,6 +70,13 @@ function detectItem(linha) {
 function detectUnidade(linha, listaUnidades = []) {
   if (!linha) return { unidadeId: null, linha };
 
+  const buildRegex = (termo) => {
+    const escaped = termo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // \b não funciona para símbolos como '%' (não são "word chars")
+    const isWordLike = /^[A-Za-z0-9_]+$/.test(termo);
+    return isWordLike ? new RegExp(`\\b${escaped}\\b`, "i") : new RegExp(escaped, "i");
+  };
+
   const partes = (u) => {
     const raw = u?.unidadeNome || u?.valor || u?.nome || "";
     const [sigla, ...rest] = raw.split(" - ");
@@ -83,8 +90,7 @@ function detectUnidade(linha, listaUnidades = []) {
 
     for (const termo of [sigla, nomeCompleto]) {
       if (!termo) continue;
-      const escaped = termo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(`\\b${escaped}\\b`, "i");
+      const regex = buildRegex(termo);
       if (regex.test(linha)) {
         const novaLinha = linha.replace(regex, "").trim();
         return {
@@ -96,6 +102,20 @@ function detectUnidade(linha, listaUnidades = []) {
   }
 
   return { unidadeId: null, linha };
+}
+
+function inferUnidadeFromDescricao(descricao, listaUnidades = []) {
+  if (!descricao) return null;
+  // Ex.: "(48,69%)" ou "17.6%"
+  if (/%/.test(descricao)) {
+    return normalizeUnidade("%", listaUnidades);
+  }
+  // Ex.: "por cento", "percentual" (OCR varia)
+  const descNorm = normalizeHeader(descricao);
+  if (/\bPOR\s+CENTO\b/.test(descNorm) || /\bPERCENT(UAL|O)?\b/.test(descNorm)) {
+    return normalizeUnidade("%", listaUnidades);
+  }
+  return null;
 }
 
 /* =======================================================
@@ -163,7 +183,9 @@ module.exports.parseServices = (doc, depara) => {
             Item: item,
             Categoria: null,
             Descricao: descricao,
-            Unidade: normalizeUnidade(unidadeRaw, depara.unidades),
+            Unidade:
+              normalizeUnidade(unidadeRaw, depara.unidades) ??
+              inferUnidadeFromDescricao(descricao, depara.unidades),
             Quantidade: quantidade,
           });
 
