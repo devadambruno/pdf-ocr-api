@@ -134,30 +134,71 @@ module.exports.parseDocument = async (docs, depara) => {
 
   /*
    * Remove linhas que são claramente boilerplate (cabeçalho/rodapé de certidão,
-   * número de página, texto legal, etc.) e não serviços reais da planilha.
+   * número de página, texto legal, assinaturas, endereços, etc.) e não serviços reais.
    */
   const boilerplatePatterns = [
     /Certidão\s+de\s+Acervo\s+Técnico/i,
-    /Conselho\s+Regional\s+de\s+Engenharia\s+e\s+Agronomia/i,
+    /Conselho\s+Regional\s+de\s+Engenharia\s+(e\s+)?Agronomia/i,
+    /Conselho\s+Regional\s+de\s+Engenharia\s*$/i,
+    /Regional\s+de\s+Engenharia\s+.*Agronomia\s+da\s+Bahia/i,
     /CREA-\s*BA|CREA\s*-\s*BA/i,
     /Página\s*\d+\s*\/\s*\d+/i,
     /vinculado\s+à\s+Certidão/i,
-    /Chave\s+de\s+Impressão/i,
+    /Chave\s+de\s+Impress[ãa]?o?/i,
+    /Certidão\s*[°º]\s*\d+\s*\/\s*\d*/i,
+    /\/\d{2}\/\d{4},\s*\d{2}:\s*$/i,
+    /^\/\d{2}\/\d{4},\s*\d{2}:$/i,
     /Tel:\s*\+\s*55\s*\(\d{2}\)/i,
-    /Avenida\s+\d+|Rua\s+[A-Z]/i,
+    /Avenida\s+\d+|Avanida\s+\d+/i,
+    /Rua\s+[A-ZÀ-Ú]/i,
+    /Plataforma\s+[GL]\s*,?\s*Lado\s+[AB]/i,
+    /Centro\s+Administrativo\s+da\s+Bahia/i,
+    /Salvador-Bahia\s+CEP/i,
     /Impresso\s+em:\s*\d{2}\/\d{2}\/\d{4}/i,
     /Este\s+documento\s+encontra-se\s+registrado/i,
     /O\s+documento\s+neste\s+ato\s+registrado/i,
     /Resolução\s+N[°º]\s*\d+/i,
     /CERTIFICAMOS\s*,/i,
     /Coordenação\s+Executiva\s+de\s+Infraestrutura\s+da\s+Rede/i,
+    /Declaramos\s+que\s+todos\s+os\s+serviços/i,
+    /Comissão\s+Transitória\s+de\s+Recebimento/i,
+    /Coordenador\s+Executivo\s*$/i,
+    /Mat\.\s*\d+\.\d+\.\d+-\d*/i,
     /E-mail:\s*creaba@creaba/i,
     /Fax:\s*\+\s*55/i,
     /Site:\s*www\./i,
     /GOVERNO\s+DO\s+ESTADO/i,
     /Secretaria\s+da\s+Saúde\s+do\s+Estado/i,
+    /under\s+F\.L\./i,
+    /^un\s*$/i,
+    /(?:Silvia|ílvia|Sílvia)\s+Maria\s+Pereira/i,
+    /Fernando\s+\.?\s*da\s+Cunha/i,
+    /Cesar\s+Maurício\s+B/i,
+    /ésar\s+Mauricio\s+Chastinet/i,
+    /^\d{2}\/\d{2}\/\d{4},\s*09:\s*$/i,
+    /^\s*\/\d{2}\/\d{4},\s*\d{2}:\s*$/i,
   ];
   const descMaxLength = 600;
+  /* Quantidade/Item que são claramente lixo (OCR, índice, número gigante) */
+  function isGarbageQuantidade(qtd) {
+    if (qtd == null) return false;
+    const s = String(qtd).trim();
+    if (/^[.,;:\s]+$/.test(s) || s === "" || s.length > 25) return true;
+    if (/^\d+$/.test(s) && s.length > 12) return true;
+    if (/^[\d.,]+$/.test(s) && (s.replace(/\D/g, "").length > 15)) return true;
+    return false;
+  }
+  function isGarbageItem(item) {
+    if (item == null) return false;
+    const s = String(item).trim();
+    return /^\d+$/.test(s) && s.length > 10;
+  }
+  /** Unidade que parece índice de bloco (número puro) em vez de unidade de medida */
+  function unidadePareceIndice(unidade) {
+    if (unidade == null) return false;
+    const u = String(unidade).trim();
+    return /^\d{1,4}$/.test(u) && parseInt(u, 10) > 0;
+  }
   todosServicos = todosServicos.filter((s) => {
     const cat = (s.Categoria != null && String(s.Categoria).trim()) || "";
     const desc = (s.Descricao != null && String(s.Descricao).trim()) || "";
@@ -165,22 +206,20 @@ module.exports.parseDocument = async (docs, depara) => {
     if (text.length > descMaxLength) return false;
     if (desc && /^Página\s*\d+\s*\/?\s*$/i.test(desc)) return false;
     if (s.Quantidade != null && String(s.Quantidade).trim() === "47" && !desc) return false;
+    if (isGarbageQuantidade(s.Quantidade)) return false;
+    if (isGarbageItem(s.Item)) return false;
+    if ((cat === "un" || desc === "un") && !s.Quantidade && !s.Item) return false;
+    if (unidadePareceIndice(s.Unidade) && semQuantidade(s.Quantidade) && cat && cat === desc) return false;
     const isBoilerplate = boilerplatePatterns.some((re) => re.test(text));
     return !isBoilerplate;
   });
 
   /* ================= RETORNO FINAL ================= */
 
- /* ================= DEBUG ================= */
-
-console.log("=== DEBUG TIPO CERTIDÃO ===");
-console.log("Lista recebida:", depara.tipoCertidao);
-console.log("Texto início:", textoCompleto.slice(0, 1500));
-
-const tipoCertidaoId = detectTipoCertidao(
-  textoCompleto,
-  depara.listaTiposOriginal
-);
+  const tipoCertidaoId = detectTipoCertidao(
+    textoCompleto,
+    depara.listaTiposOriginal
+  );
 
 
 
