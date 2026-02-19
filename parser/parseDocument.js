@@ -116,6 +116,22 @@ module.exports.parseDocument = async (docs, depara) => {
   /* Categoria: B = linha sem quantidade é "mãe", próximas herdam; A = fallback prefixo da Descricao */
   todosServicos = preencherCategoria(todosServicos);
 
+  /*
+   * Remove do JSON as linhas que são apenas cabeçalhos de categoria (replicada nas demais).
+   * Critério: Item, Unidade e Quantidade nulos e Categoria === Descricao.
+   */
+  todosServicos = todosServicos.filter((s) => {
+    const semItem = s.Item == null || String(s.Item).trim() === "";
+    const semUnidade = s.Unidade == null || String(s.Unidade).trim() === "";
+    const semQtd = semQuantidade(s.Quantidade);
+    const cat = s.Categoria != null ? String(s.Categoria).trim() : "";
+    const desc = s.Descricao != null ? String(s.Descricao).trim() : "";
+    const categoriaIgualDescricao = cat !== "" && cat === desc;
+    const ehSoCabecalhoCategoria =
+      semItem && semUnidade && semQtd && categoriaIgualDescricao;
+    return !ehSoCabecalhoCategoria;
+  });
+
   /* ================= RETORNO FINAL ================= */
 
  /* ================= DEBUG ================= */
