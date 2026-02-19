@@ -78,9 +78,9 @@ for (const chunk of pdfChunks) {
       content: chunk,
       mimeType: "application/pdf",
     },
-    processOptions: {
-      imagelessMode: true
-    }
+    ...(process.env.DOCUMENT_AI_IMAGELESS_MODE === "true"
+      ? { processOptions: { imagelessMode: true } }
+      : {})
   });
 
   documentos.push(result.document);

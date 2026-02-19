@@ -1,54 +1,44 @@
-
 const { normalizeUnidade } = require("./normalizeUnidade");
-
-var teste =  `
-const { normalizeUnidade } = require("./normalizeUnidade");
-
-module.exports.parseServices = (doc, depara) => {
-  const resultado = [];
-
-  for (const page of doc.pages || []) {
-    for (const table of page.tables || []) {
-      for (const row of table.bodyRows || []) {
-        const cells = row.cells.map(c => {
-          const seg = c.layout.textAnchor.textSegments?.[0];
-          if (!seg) return null;
-          return doc.text
-            .substring(seg.startIndex, seg.endIndex)
-            .trim();
-        });
-
-        const item = cells[0];
-        const descricao = cells[1];
-        const unidade = cells[2];
-        const quantidade = cells[3];
-
-        // 🔥 FILTRO ANTI-LIXO
-        if (!item || !/^\d+(\.\d+)*$/.test(item)) continue;
-
-        resultado.push({
-          Item: item,
-          Descricao: descricao || null,
-          Quantidade: quantidade || null,
-          Categoria: null,
-          Unidade: normalizeUnidade(unidade, depara.unidades),
-
-        });
-      }
-    }
-  }
-
-
-
-
-
-  return resultado;
-};
-`
 
 /* =======================================================
    UTIL
 ======================================================= */
+
+function getTextFromCell(doc, cell) {
+  const segs = cell?.layout?.textAnchor?.textSegments;
+  if (!segs?.length) return null;
+  const start = segs[0]?.startIndex ?? 0;
+  const end = segs[0]?.endIndex ?? 0;
+  return (doc.text || "").substring(start, end).trim() || null;
+}
+
+function normalizeHeader(texto = "") {
+  return texto
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function guessServiceColumns(headerCells = []) {
+  const headers = headerCells.map((h) => normalizeHeader(h || ""));
+
+  const idxItem = headers.findIndex((h) => /\bITEM\b/.test(h));
+  const idxUnidade = headers.findIndex((h) => /\bUNIDADE\b/.test(h));
+  const idxQuantidade = headers.findIndex(
+    (h) => /\bQUANTIDADE\b/.test(h) || /\bQTD\b/.test(h)
+  );
+  const idxDescricao = headers.findIndex(
+    (h) =>
+      /\bNATUREZA\b/.test(h) ||
+      /\bSERVIC/.test(h) ||
+      /\bDESCRIC/.test(h) ||
+      /\bDESCRICAO\b/.test(h)
+  );
+
+  return { idxItem, idxDescricao, idxUnidade, idxQuantidade };
+}
 
 function cleanLine(texto = "") {
   return texto
@@ -80,20 +70,28 @@ function detectItem(linha) {
 function detectUnidade(linha, listaUnidades = []) {
   if (!linha) return { unidadeId: null, linha };
 
+  const partes = (u) => {
+    const raw = u?.unidadeNome || u?.valor || u?.nome || "";
+    const [sigla, ...rest] = raw.split(" - ");
+    const nomeCompleto = rest.join(" - ").trim();
+    return [sigla?.trim(), nomeCompleto].filter(Boolean);
+  };
+
   for (const item of listaUnidades) {
-    if (!item?.unidadeNome) continue;
+    const [sigla, nomeCompleto] = partes(item);
+    if (!sigla) continue;
 
-    const sigla = item.unidadeNome.split(" - ")[0];
-
-    const regex = new RegExp(`\\b${sigla}\\b`, "i");
-
-    if (regex.test(linha)) {
-      const novaLinha = linha.replace(regex, "").trim();
-
-      return {
-        unidadeId: normalizeUnidade(sigla, listaUnidades),
-        linha: novaLinha
-      };
+    for (const termo of [sigla, nomeCompleto]) {
+      if (!termo) continue;
+      const escaped = termo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`\\b${escaped}\\b`, "i");
+      if (regex.test(linha)) {
+        const novaLinha = linha.replace(regex, "").trim();
+        return {
+          unidadeId: normalizeUnidade(termo, listaUnidades),
+          linha: novaLinha
+        };
+      }
     }
   }
 
@@ -113,30 +111,76 @@ module.exports.parseServices = (doc, depara) => {
 
   for (const page of doc.pages || []) {
     for (const table of page.tables || []) {
-      for (const row of table.bodyRows || []) {
-        const cells = row.cells.map(c => {
-          const seg = c.layout.textAnchor.textSegments?.[0];
-          if (!seg) return null;
+      let headerRow = table.headerRows?.[0] || null;
+      let bodyRows = table.bodyRows || [];
 
-          return doc.text
-            .substring(seg.startIndex, seg.endIndex)
-            .trim();
-        });
+      // Document AI às vezes coloca o header como primeira linha do body
+      if (!headerRow && bodyRows.length > 0) {
+        const firstCells = bodyRows[0].cells.map((c) => getTextFromCell(doc, c));
+        const firstRowText = firstCells.join(" ").toUpperCase();
+        if (
+          /\bUNIDADE\b/.test(firstRowText) &&
+          (/\bQUANTIDADE\b/.test(firstRowText) || /\bQTD\b/.test(firstRowText))
+        ) {
+          headerRow = bodyRows[0];
+          bodyRows = bodyRows.slice(1);
+        }
+      }
 
+      const headerCells = headerRow
+        ? headerRow.cells.map((c) => getTextFromCell(doc, c))
+        : [];
+
+      const { idxItem, idxDescricao, idxUnidade, idxQuantidade } =
+        guessServiceColumns(headerCells);
+
+      const hasServiceShape =
+        idxUnidade !== -1 &&
+        idxQuantidade !== -1 &&
+        (idxDescricao !== -1 || idxItem !== -1 || headerCells.length > 0);
+
+      for (const row of bodyRows) {
+        const cells = row.cells.map((c) => getTextFromCell(doc, c));
+        if (!cells.some(Boolean)) continue;
+
+        // Se a tabela tem cabeçalho típico de serviços, usa o mapeamento de colunas
+        if (hasServiceShape) {
+          const itemRaw = idxItem !== -1 ? cells[idxItem] : null;
+          const item = itemRaw && /^\d+(\.\d+)*$/.test(itemRaw) ? itemRaw : null;
+          const descricao =
+            (idxDescricao !== -1 ? cells[idxDescricao] : cells[0]) || null;
+          const unidadeRaw =
+            (idxUnidade !== -1 ? cells[idxUnidade] : null) || null;
+          const quantidade =
+            (idxQuantidade !== -1 ? cells[idxQuantidade] : null) || null;
+
+          // ignora linhas vazias/“total”
+          const descNorm = normalizeHeader(descricao || "");
+          if (!descricao && !item) continue;
+          if (/^TOTAL\b/.test(descNorm)) continue;
+
+          resultado.push({
+            Item: item,
+            Categoria: null,
+            Descricao: descricao,
+            Unidade: normalizeUnidade(unidadeRaw, depara.unidades),
+            Quantidade: quantidade,
+          });
+
+          continue;
+        }
+
+        // Caso antigo (tabelas com coluna item numérica)
         const item = cells[0];
-        const descricao = cells[1];
-        const unidade = cells[2];
-        const quantidade = cells[3];
-
-        if (!item || !/^\d+(\.\d+)*$/.test(item)) continue;
-
-        resultado.push({
-          Item: item,
-          Categoria: null,
-          Descricao: descricao || null,
-          Unidade: normalizeUnidade(unidade, depara.unidades),
-          Quantidade: quantidade || null
-        });
+        if (item && /^\d+(\.\d+)*$/.test(item)) {
+          resultado.push({
+            Item: item,
+            Categoria: null,
+            Descricao: cells[1] || null,
+            Unidade: normalizeUnidade(cells[2] || null, depara.unidades),
+            Quantidade: cells[3] || null,
+          });
+        }
       }
     }
   }
@@ -146,10 +190,39 @@ module.exports.parseServices = (doc, depara) => {
   console.log("⚠️ Nenhuma tabela detectada. Aplicando fallback inteligente....");
 
   /* ===============================================
-     2️⃣ FALLBACK POR TEXTO CORRIDO
+     2️⃣ FALLBACK: FORMATO CAT (Atividade Técnica com ";")
   =============================================== */
 
-  const linhas = doc.text.split("\n");
+  const textoCompleto = (doc.text || "").replace(/\r\n/g, "\n");
+  const catSegmentos = textoCompleto.split(/;\s*(?=\d+\s*-\s*(?:Execução|Coordenação|Elaboração|Planejamento|Projeto|obra|Obra|serviço|Serviço|técnico|Técnico))/i);
+
+  if (catSegmentos.length > 1) {
+    for (let seg of catSegmentos) {
+      seg = cleanLine(seg.replace(/^Atividade\s+Técnica:\s*/i, "").trim());
+      if (!seg || seg.length < 10) continue;
+
+      const { quantidade, linha: semQtd } = detectQuantidade(seg);
+      const { unidadeId, linha: resto } = detectUnidade(semQtd, depara.unidades);
+
+      if (!quantidade && !unidadeId) continue;
+
+      const { item, linha: descricao } = detectItem(resto);
+      resultado.push({
+        Item: item,
+        Categoria: null,
+        Descricao: descricao || resto || null,
+        Unidade: unidadeId,
+        Quantidade: quantidade,
+      });
+    }
+    if (resultado.length > 0) return resultado;
+  }
+
+  /* ===============================================
+     3️⃣ FALLBACK: LINHA POR LINHA (texto corrido genérico)
+  =============================================== */
+
+  const linhas = textoCompleto.split("\n");
 
   for (let linha of linhas) {
     linha = cleanLine(linha);
