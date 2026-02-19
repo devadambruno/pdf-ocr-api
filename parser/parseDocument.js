@@ -2,6 +2,54 @@ const { parseServices } = require("./parseServices");
 const { extractHeader } = require("../gpt/extractHeader");
 const { detectTipoCertidao } = require("./detectTipoCertidao");
 
+/** Considera vazio: null, string vazia ou só espaços */
+function semQuantidade(qtd) {
+  if (qtd == null) return true;
+  const s = String(qtd).trim();
+  return s === "";
+}
+
+/** Fallback A: extrai prefixo da Descricao até " - " ou ":" */
+function categoriaPorPrefixo(descricao) {
+  if (!descricao || typeof descricao !== "string") return null;
+  const d = descricao.trim();
+  if (!d) return null;
+  const idxTraco = d.indexOf(" - ");
+  const idxDoisPontos = d.indexOf(":");
+  let fim = d.length;
+  if (idxTraco !== -1) fim = Math.min(fim, idxTraco);
+  if (idxDoisPontos !== -1) fim = Math.min(fim, idxDoisPontos);
+  const prefixo = d.slice(0, fim).trim();
+  return prefixo || null;
+}
+
+/**
+ * Preenche Categoria: prioridade B (linha sem quantidade = mãe, próximas herdam),
+ * fallback A (prefixo da Descricao até " - " ou ":").
+ */
+function preencherCategoria(servicos) {
+  if (!Array.isArray(servicos) || servicos.length === 0) return servicos;
+
+  let categoriaVigente = null;
+
+  const resultado = servicos.map((s) => {
+    const descricao = s.Descricao;
+    const ehLinhaMae = semQuantidade(s.Quantidade);
+
+    if (ehLinhaMae && descricao) {
+      categoriaVigente = descricao.trim();
+      return { ...s, Categoria: categoriaVigente };
+    }
+
+    const categoriaB = categoriaVigente;
+    const categoriaA = categoriaPorPrefixo(descricao);
+    const categoria = categoriaB ?? categoriaA ?? null;
+
+    return { ...s, Categoria: categoria };
+  });
+
+  return resultado;
+}
 
 module.exports.parseDocument = async (docs, depara) => {
   const documentos = Array.isArray(docs) ? docs : [docs];
@@ -44,9 +92,29 @@ module.exports.parseDocument = async (docs, depara) => {
 
   /* ================= SERVIÇOS ================= */
 
-  const todosServicos = documentos.flatMap((doc) =>
+  let todosServicos = documentos.flatMap((doc) =>
     parseServices(doc, depara)
   );
+
+  /*
+   * Numeração automática do Item (1, 2, 3...) quando todos estiverem em branco.
+   * Adaptado ao cenário com Categoria: só linhas com Quantidade recebem número;
+   * linhas "mãe" (sem quantidade) mantêm Item = null.
+   */
+  const todosItensEmBranco = todosServicos.every(
+    (s) => s.Item == null || String(s.Item).trim() === ""
+  );
+  if (todosItensEmBranco && todosServicos.length > 0) {
+    let contador = 0;
+    todosServicos = todosServicos.map((s) => {
+      const temQuantidade = !semQuantidade(s.Quantidade);
+      const item = temQuantidade ? String(++contador) : null;
+      return { ...s, Item: item };
+    });
+  }
+
+  /* Categoria: B = linha sem quantidade é "mãe", próximas herdam; A = fallback prefixo da Descricao */
+  todosServicos = preencherCategoria(todosServicos);
 
   /* ================= RETORNO FINAL ================= */
 
