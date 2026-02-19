@@ -242,9 +242,25 @@ module.exports.parseServices = (doc, depara) => {
 
   /* ===============================================
      3️⃣ FALLBACK: LINHA POR LINHA (texto corrido genérico)
+     Restringe à seção "Planilha de Serviços" quando existir (evita cabeçalho/rodapé/memorial).
   =============================================== */
 
-  const linhas = textoCompleto.split("\n");
+  let textoParaLinhas = textoCompleto;
+  const planilhaMarkers = [
+    /PLANILHA\s+(?:DOS\s+)?SERVI[CÇ]OS\s+EXECUTADOS/i,
+    /ITEM\s+UND\.?\s+QUANT/i,
+    /\d+\.\s*PLANILHA/i,
+  ];
+  for (const re of planilhaMarkers) {
+    const match = textoCompleto.match(re);
+    if (match) {
+      const start = match.index + match[0].length;
+      textoParaLinhas = textoCompleto.slice(start);
+      break;
+    }
+  }
+
+  const linhas = textoParaLinhas.split("\n");
 
   for (let linha of linhas) {
     linha = cleanLine(linha);

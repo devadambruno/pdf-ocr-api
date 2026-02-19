@@ -132,6 +132,43 @@ module.exports.parseDocument = async (docs, depara) => {
     return !ehSoCabecalhoCategoria;
   });
 
+  /*
+   * Remove linhas que são claramente boilerplate (cabeçalho/rodapé de certidão,
+   * número de página, texto legal, etc.) e não serviços reais da planilha.
+   */
+  const boilerplatePatterns = [
+    /Certidão\s+de\s+Acervo\s+Técnico/i,
+    /Conselho\s+Regional\s+de\s+Engenharia\s+e\s+Agronomia/i,
+    /CREA-\s*BA|CREA\s*-\s*BA/i,
+    /Página\s*\d+\s*\/\s*\d+/i,
+    /vinculado\s+à\s+Certidão/i,
+    /Chave\s+de\s+Impressão/i,
+    /Tel:\s*\+\s*55\s*\(\d{2}\)/i,
+    /Avenida\s+\d+|Rua\s+[A-Z]/i,
+    /Impresso\s+em:\s*\d{2}\/\d{2}\/\d{4}/i,
+    /Este\s+documento\s+encontra-se\s+registrado/i,
+    /O\s+documento\s+neste\s+ato\s+registrado/i,
+    /Resolução\s+N[°º]\s*\d+/i,
+    /CERTIFICAMOS\s*,/i,
+    /Coordenação\s+Executiva\s+de\s+Infraestrutura\s+da\s+Rede/i,
+    /E-mail:\s*creaba@creaba/i,
+    /Fax:\s*\+\s*55/i,
+    /Site:\s*www\./i,
+    /GOVERNO\s+DO\s+ESTADO/i,
+    /Secretaria\s+da\s+Saúde\s+do\s+Estado/i,
+  ];
+  const descMaxLength = 600;
+  todosServicos = todosServicos.filter((s) => {
+    const cat = (s.Categoria != null && String(s.Categoria).trim()) || "";
+    const desc = (s.Descricao != null && String(s.Descricao).trim()) || "";
+    const text = `${cat} ${desc}`.trim();
+    if (text.length > descMaxLength) return false;
+    if (desc && /^Página\s*\d+\s*\/?\s*$/i.test(desc)) return false;
+    if (s.Quantidade != null && String(s.Quantidade).trim() === "47" && !desc) return false;
+    const isBoilerplate = boilerplatePatterns.some((re) => re.test(text));
+    return !isBoilerplate;
+  });
+
   /* ================= RETORNO FINAL ================= */
 
  /* ================= DEBUG ================= */
