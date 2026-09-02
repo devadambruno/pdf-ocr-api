@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const crypto = require("crypto");
 const { processJob } = require("./worker/processJob");
+const { ocrPdfUrlToText } = require("./worker/ocrTexto");
 
 const app = express();
 app.use(express.json());
@@ -100,6 +101,21 @@ app.get("/ocr/status/:job_id", async (req, res) => {
   const job = await xanoGetJob(req.params.job_id);
   if (!job) return res.status(404).json({ error: "Job não encontrado" });
   res.json(job);
+});
+
+// OCR de texto cru (SÍNCRONO) — para o chat de IA ler editais escaneados.
+// Independente do /ocr/parse (certidão): sem protocolos_id, sem de/para, sem job.
+// Request:  { pdf_url }
+// Response: { success: true, texto: "..." }
+app.post("/ocr/texto", async (req, res) => {
+  const { pdf_url } = req.body || {};
+  if (!pdf_url) return res.status(400).json({ error: "pdf_url obrigatório" });
+  try {
+    const texto = await ocrPdfUrlToText(pdf_url);
+    return res.json({ success: true, texto });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
 });
 
 app.get("/health", (_, res) => res.json({ status: "ok" }));
